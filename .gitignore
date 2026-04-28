@@ -37,3 +37,6 @@ Thumbs.db
 # Bulk-onboard outcome reports (contain plaintext OAuth secrets)
 bulk-onboard-report*.json
 *-onboard-report*.json
+
+# Brainstorm visual companion
+.superpowers/
