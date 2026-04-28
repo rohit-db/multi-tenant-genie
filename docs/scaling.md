@@ -1,5 +1,50 @@
 # Rate Limits & Scaling
 
+## Service Principal & Account API Limits
+
+Sourced from the [Databricks resource limits page](https://docs.databricks.com/aws/en/resources/limits).
+
+| Operation | Limit | Notes |
+|---|---|---|
+| Account SCIM `POST` / `PUT` / `DELETE` | **5 / second** | SP create, OAuth secret create, SP delete |
+| Account SCIM `PATCH` | **2 / second** | Updates to SPs, group memberships |
+| Account SCIM `GET` | **20 / second** | Lookups |
+| Workspace API (general) | Per-endpoint, see docs | E.g. `workspace/list` is 50/sec |
+| OAuth `/oidc/v1/token` | Not formally documented | Generally generous; back off on 429 |
+
+### Implications for Bulk Onboarding
+
+At 5 POST/sec, the theoretical floor for **N tenants** is `N / 5` seconds (just SP create), but each tenant also needs a secret mint (POST), a secret-scope put (POST), and 2-3 UC inserts (warehouse-bound, separate budget). Realistic per-tenant time: **2–4 seconds** at 5 concurrent workers.
+
+| Tenants | Best-case | Realistic |
+|---|---|---|
+| 100 | ~20s | 1–2 min |
+| 500 | ~100s | 4–7 min |
+| 1,000 | ~200s | 8–15 min |
+| 4,000 | ~13 min | 30–60 min |
+
+For >5,000 tenants, parallelize across multiple account-API hosts (uncommon) or run in off-hours batches.
+
+### Bulk Onboarding Script
+
+[`src/scripts/bulk_onboard.py`](../src/scripts/bulk_onboard.py) implements the rate-limit-aware pattern:
+- Default `--workers 5` matches the POST budget
+- 429s retried with exponential backoff (1s → 2s → 4s → 8s + jitter)
+- Idempotent: existing `tenant_id`s are skipped
+- Chunked grants (one `PATCH` per chunk for Genie permissions, batched UC GRANTs)
+- Per-tenant outcome JSON for post-run reconciliation
+
+```bash
+# Dry-run plan
+python -m src.scripts.bulk_onboard --count 500 --dry-run
+
+# Real run from CSV
+python -m src.scripts.bulk_onboard --input tenants.csv --workers 5
+
+# Tighter concurrency for shared-account environments
+python -m src.scripts.bulk_onboard --input tenants.csv --workers 3 --chunk 25
+```
+
 ## Genie API Limits
 
 | Constraint | Limit | Source |

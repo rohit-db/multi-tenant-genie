@@ -200,6 +200,61 @@ w.statement_execution.execute_statement(
 
 Source: [`src/lib/sp_manager.py`](../src/lib/sp_manager.py)
 
+### 2.4 Bulk onboarding at scale
+
+For 100s–1000s of tenants, the [Account SCIM API rate limits](https://docs.databricks.com/aws/en/resources/limits) (5 POST/sec) become the binding constraint. The pattern:
+
+1. **Bounded concurrency** — workers ≈ POST/sec budget (default 5).
+2. **429 retry with exponential backoff** — 1s → 2s → 4s → 8s + jitter.
+3. **Idempotency** — pre-load existing tenants, skip already-onboarded ids.
+4. **Chunked grants** — call `grant_genie_access(ids)` once per chunk, not per tenant. Each call is one PATCH for the whole ACL.
+5. **Persist secrets per chunk** — so a mid-run crash never loses a secret.
+
+```python
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import random, time
+
+def onboard_one(mgr, tenant_id, tenant_name, max_retries=4):
+    for attempt in range(1, max_retries + 1):
+        try:
+            return mgr.onboard_tenant(tenant_id, tenant_name)
+        except Exception as e:
+            if "429" in str(e) and attempt < max_retries:
+                time.sleep((2 ** (attempt - 1)) + random.uniform(0, 0.5))
+                continue
+            raise
+
+def bulk_onboard(mgr, tenants, workers=5, chunk=50):
+    existing = {t.tenant_id for t in mgr.list_tenants()}
+    new = [t for t in tenants if t.tenant_id not in existing]
+
+    for i in range(0, len(new), chunk):
+        batch = new[i : i + chunk]
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(onboard_one, mgr, t.tenant_id, t.tenant_name): t
+                       for t in batch}
+            successes = []
+            for f in as_completed(futures):
+                try:
+                    successes.append(f.result().tenant.tenant_id)
+                except Exception as e:
+                    print(f"  failed: {futures[f].tenant_id}: {e}")
+        # Batched grants for the chunk's successes
+        mgr.grant_data_access(successes)
+        mgr.grant_genie_access(successes)  # one PATCH for all SPs in this batch
+```
+
+Wall-time expectations (5 workers, no 429s):
+
+| Tenants | Realistic |
+|---|---|
+| 100 | 1–2 min |
+| 500 | 4–7 min |
+| 1,000 | 8–15 min |
+| 4,000 | 30–60 min |
+
+Source: [`src/scripts/bulk_onboard.py`](../src/scripts/bulk_onboard.py) — production-style script with dry-run, per-tenant outcome JSON, and progress reporting.
+
 ---
 
 ## 3. Unity Catalog — Row-Level Security
