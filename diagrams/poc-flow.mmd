@@ -1,0 +1,24 @@
+flowchart LR
+    subgraph LAPTOP["💻 Your Laptop"]
+        UI["React UI<br/>localhost:5173"]
+        PROXY["FastAPI Proxy<br/>localhost:8000"]
+        SECRETS[(".demo-secrets.env<br/>per-tenant SP secrets")]
+    end
+
+    subgraph DBX["☁️ Databricks Workspace"]
+        OIDC["OIDC token endpoint<br/>/oidc/v1/token"]
+        GENIE["Genie Space<br/>'Multi-Tenant Bookings Demo'"]
+        UC["Unity Catalog<br/>━━━━━━━━━<br/>bookings + row filter<br/>sp_tenant_mapping<br/>audit_log"]
+    end
+
+    UI -->|"1. ask as tenant 'nike'"| PROXY
+    PROXY -->|"2. fetch nike's SP secret"| SECRETS
+    PROXY -->|"3. exchange SP creds → JWT"| OIDC
+    PROXY -->|"4. ask Genie (Bearer JWT)"| GENIE
+    GENIE -->|"5. run generated SQL"| UC
+    UC -->|"6. only nike's rows<br/>(row filter applied)"| GENIE
+    GENIE -->|"7. answer"| PROXY
+    PROXY -->|"8. response + audit row"| UI
+
+    style LAPTOP fill:#e8f4f8,stroke:#1B3139
+    style DBX fill:#fff4e8,stroke:#FF3621
