@@ -1,0 +1,105 @@
+flowchart TD
+    classDef clientStyle fill:#4285F4,stroke:#1a73e8,color:#ffffff,rx:8
+    classDef gatewayStyle fill:#0F9D58,stroke:#0b8043,color:#ffffff,rx:8
+    classDef lakebaseStyle fill:#F4B400,stroke:#e37400,color:#1a1a1a,rx:8
+    classDef databricksStyle fill:#FF6D00,stroke:#e65100,color:#ffffff,rx:8
+    classDef ucStyle fill:#AB47BC,stroke:#7B1FA2,color:#ffffff,rx:8
+    classDef warehouseStyle fill:#26C6DA,stroke:#00838F,color:#1a1a1a,rx:8
+    classDef altStyle fill:#78909C,stroke:#546E7A,color:#ffffff,rx:4
+    classDef noteStyle fill:#ECEFF1,stroke:#90A4AE,color:#37474F,rx:4
+
+    %% ── CLIENT TIER ──────────────────────────────────────────────────
+    subgraph CLIENTS["CLIENT APPLICATIONS  (thousands of external tenants)"]
+        direction LR
+        C1["Client App A\nAPI Key / OAuth"]:::clientStyle
+        C2["Client App B\nAPI Key / OAuth"]:::clientStyle
+        C3["Client App C\nAPI Key / OAuth"]:::clientStyle
+        CDOTS["... N clients"]:::clientStyle
+    end
+
+    %% ── PROXY / GATEWAY TIER ─────────────────────────────────────────
+    subgraph PROXY["API GATEWAY / PROXY APP  (Next.js · FastAPI · etc.)"]
+        direction TB
+        GW["Ingress & Auth\nValidate API key / OAuth token"]:::gatewayStyle
+        LOOKUP["Client Lookup\nResolve client_id → SP credentials"]:::gatewayStyle
+        TOKENREQ["Token Exchange\nRequest Databricks OIDC token\nSP credentials + custom_claim = client_id"]:::gatewayStyle
+        APIPROXY["Genie API Proxy\nForward request with custom-claims token"]:::gatewayStyle
+    end
+
+    %% ── LAKEBASE (POSTGRESQL) ────────────────────────────────────────
+    subgraph LB["LAKEBASE  (PostgreSQL)"]
+        direction TB
+        CR[("Client Registry\nclient_id · name · tier\nallowed_spaces")]:::lakebaseStyle
+        SPC[("SP Credentials\nEncrypted secrets\nper environment")]:::lakebaseStyle
+        AL[("Audit Logs\nrequest · client_id\ntimestamp · result")]:::lakebaseStyle
+        SC[("Session Cache\nactive tokens\nTTL-based")]:::lakebaseStyle
+    end
+
+    %% ── DATABRICKS PLATFORM ──────────────────────────────────────────
+    subgraph DBX["DATABRICKS WORKSPACE"]
+        direction TB
+
+        OIDC["Databricks OIDC\nToken Endpoint\n/oidc/v1/token"]:::databricksStyle
+        SP["Single Service Principal\n(Shared — Recommended Pattern)\nhas SELECT on Dynamic Views"]:::databricksStyle
+
+        subgraph GENIE["GENIE SPACE"]
+            direction TB
+            GAPI["Genie Conversation API\nPOST /api/2.0/genie/spaces/{id}/start-conversation"]:::databricksStyle
+            GNLQ["Natural Language\n→ SQL Translation"]:::databricksStyle
+        end
+
+        subgraph WH["SERVERLESS SQL WAREHOUSE"]
+            EXEC["Query Execution\nEngine"]:::warehouseStyle
+        end
+
+        subgraph UC["UNITY CATALOG"]
+            direction TB
+            BASE[("Base Tables\nAll tenant data\ncombined")]:::ucStyle
+            DV["Dynamic Views\n(Row-Level Security)\ncurrent_oauth_custom_identity_claims()\n→ filter by client_id"]:::ucStyle
+            RF["Row Filters &\nColumn Masks\nUC Security Policies"]:::ucStyle
+        end
+
+        AUDIT[("System Tables\nquery_history · audit_logs\naccess_history")]:::warehouseStyle
+    end
+
+    %% ── ALTERNATIVE PATTERN ──────────────────────────────────────────
+    subgraph ALT["ALTERNATIVE: SP-PER-CLIENT PATTERN"]
+        direction LR
+        ALTSP["One SP per client\n(operational overhead:\nN SPs to manage, rotate,\nmonitor, and permission)"]:::altStyle
+        ALTNOTE["Works but NOT recommended\nfor large client counts.\nUse only if clients require\nhard credential isolation."]:::noteStyle
+    end
+
+    %% ── PRIMARY FLOW ─────────────────────────────────────────────────
+    C1 -->|"1  API key / OAuth"| GW
+    C2 -->|"1  API key / OAuth"| GW
+    C3 -->|"1  API key / OAuth"| GW
+    CDOTS -->|"1  API key / OAuth"| GW
+
+    GW -->|"2  validate + extract client_id"| LOOKUP
+    LOOKUP <-->|"3  fetch client record"| CR
+    LOOKUP <-->|"3  fetch encrypted SP secret"| SPC
+
+    LOOKUP -->|"4  client_id + SP credentials"| TOKENREQ
+    TOKENREQ -->|"5  client_credentials grant\n+ custom_claim: client_id"| OIDC
+    OIDC -->|"5  JWT with custom claims"| SP
+    SP -->|"5  signed token returned"| TOKENREQ
+
+    TOKENREQ -->|"6  bearer token (with custom claim)"| APIPROXY
+    APIPROXY -->|"7  POST /start-conversation"| GAPI
+    GAPI --> GNLQ
+    GNLQ -->|"8  SQL query"| EXEC
+
+    EXEC -->|"9  evaluates RLS"| DV
+    DV -->|"9  WHERE client_id = current_oauth_custom_identity_claims()"| RF
+    RF -->|"9  filtered scan"| BASE
+    BASE -->|"10  only client rows"| EXEC
+    EXEC -->|"10  results"| GAPI
+    GAPI -->|"11  conversation response"| APIPROXY
+    APIPROXY -->|"11  JSON response"| CLIENTS
+
+    %% ── AUDIT WRITES ─────────────────────────────────────────────────
+    APIPROXY -.->|"audit event"| AL
+    EXEC -.->|"query telemetry"| AUDIT
+
+    %% ── ALT PATTERN LINK ─────────────────────────────────────────────
+    ALTSP -.->|"replaces"| SP

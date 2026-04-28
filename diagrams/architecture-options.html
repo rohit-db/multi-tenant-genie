@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi-Tenant Genie — Architecture Options</title>
+<style>
+  :root {
+    --db-red: #FF3621;
+    --db-dark: #1B3139;
+    --db-gray: #F5F5F5;
+    --green: #0D9F6E;
+    --amber: #D97706;
+    --red: #DC2626;
+    --blue: #2563EB;
+    --purple: #7C3AED;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #1a1a1a; background: #fff; }
+
+  /* Header */
+  header { background: var(--db-dark); color: #fff; padding: 2rem 3rem; }
+  header h1 { font-size: 1.8rem; font-weight: 700; }
+  header p { margin-top: 0.5rem; opacity: 0.8; font-size: 1rem; }
+  .badge { display: inline-block; background: var(--db-red); color: #fff; padding: 2px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; margin-left: 8px; vertical-align: middle; }
+
+  /* Nav tabs */
+  .tabs { display: flex; background: #fff; border-bottom: 2px solid #e5e5e5; padding: 0 3rem; position: sticky; top: 0; z-index: 10; }
+  .tab { padding: 1rem 1.5rem; cursor: pointer; font-weight: 600; font-size: 0.95rem; border-bottom: 3px solid transparent; transition: all 0.2s; color: #666; }
+  .tab:hover { color: var(--db-dark); }
+  .tab.active { color: var(--db-red); border-bottom-color: var(--db-red); }
+
+  /* Sections */
+  .section { display: none; padding: 2rem 3rem; max-width: 1400px; }
+  .section.active { display: block; }
+
+  /* Cards */
+  .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 1.5rem; margin: 1.5rem 0; }
+  .card { border: 1px solid #e5e5e5; border-radius: 12px; padding: 1.5rem; background: #fff; transition: box-shadow 0.2s; }
+  .card:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+  .card h3 { font-size: 1.1rem; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 8px; }
+  .card p { font-size: 0.9rem; line-height: 1.6; color: #444; }
+  .card.recommended { border-color: var(--green); border-width: 2px; }
+  .card.recommended::before { content: 'RECOMMENDED'; display: block; font-size: 0.7rem; font-weight: 700; color: var(--green); letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+  .card.fallback { border-color: var(--amber); border-width: 2px; }
+  .card.fallback::before { content: 'FALLBACK'; display: block; font-size: 0.7rem; font-weight: 700; color: var(--amber); letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+  .card.not-recommended { border-color: #ccc; }
+  .card.not-recommended::before { content: 'NOT RECOMMENDED FOR BCD'; display: block; font-size: 0.7rem; font-weight: 700; color: #999; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+
+  /* Diagrams */
+  .diagram-box { background: var(--db-gray); border-radius: 12px; padding: 2rem; margin: 1.5rem 0; overflow-x: auto; }
+  .flow { display: flex; align-items: center; gap: 0; flex-wrap: wrap; justify-content: center; }
+  .flow-item { display: flex; flex-direction: column; align-items: center; min-width: 120px; }
+  .flow-box { padding: 12px 20px; border-radius: 8px; font-size: 0.85rem; font-weight: 600; text-align: center; line-height: 1.4; min-width: 130px; }
+  .flow-arrow { font-size: 1.5rem; color: #999; padding: 0 8px; }
+  .flow-label { font-size: 0.7rem; color: #666; margin-top: 4px; max-width: 130px; text-align: center; }
+  .bg-blue { background: #DBEAFE; color: #1E40AF; }
+  .bg-green { background: #D1FAE5; color: #065F46; }
+  .bg-purple { background: #EDE9FE; color: #5B21B6; }
+  .bg-amber { background: #FEF3C7; color: #92400E; }
+  .bg-red { background: #FEE2E2; color: #991B1B; }
+  .bg-gray { background: #E5E7EB; color: #374151; }
+
+  /* Comparison table */
+  table { width: 100%; border-collapse: collapse; margin: 1.5rem 0; font-size: 0.9rem; }
+  th { background: var(--db-dark); color: #fff; padding: 12px 16px; text-align: left; font-weight: 600; }
+  td { padding: 12px 16px; border-bottom: 1px solid #e5e5e5; vertical-align: top; }
+  tr:hover td { background: #fafafa; }
+  .check { color: var(--green); font-weight: 700; }
+  .warn { color: var(--amber); font-weight: 700; }
+  .cross { color: var(--red); font-weight: 700; }
+
+  /* Pros/cons list */
+  .pros-cons { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+  .pro-list, .con-list { list-style: none; padding: 0; }
+  .pro-list li::before { content: '+  '; color: var(--green); font-weight: 700; }
+  .con-list li::before { content: '-  '; color: var(--red); font-weight: 700; }
+  .pro-list li, .con-list li { padding: 4px 0; font-size: 0.9rem; line-height: 1.5; }
+
+  /* Section headers */
+  h2 { font-size: 1.4rem; margin: 1.5rem 0 0.5rem; color: var(--db-dark); }
+  h2:first-child { margin-top: 0; }
+  .subtitle { color: #666; font-size: 0.95rem; margin-bottom: 1.5rem; }
+
+  /* SVG diagrams */
+  svg text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+
+  /* Decision tree */
+  .decision-node { padding: 16px 24px; border-radius: 8px; margin: 8px; display: inline-block; font-size: 0.9rem; font-weight: 500; }
+  .decision-yes { background: #D1FAE5; color: #065F46; border: 2px solid var(--green); }
+  .decision-no { background: #FEF3C7; color: #92400E; border: 2px solid var(--amber); }
+  .decision-q { background: #DBEAFE; color: #1E40AF; border: 2px solid var(--blue); }
+
+  /* BCD context box */
+  .context-box { background: #FFF7ED; border: 1px solid #FDBA74; border-radius: 8px; padding: 1.25rem; margin: 1rem 0; }
+  .context-box h4 { color: #9A3412; font-size: 0.95rem; margin-bottom: 0.5rem; }
+  .context-box p, .context-box li { font-size: 0.85rem; color: #7C2D12; line-height: 1.6; }
+  .context-box ul { padding-left: 1.25rem; }
+
+  /* Scaling callout */
+  .scale-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin: 1rem 0; }
+  .scale-card { text-align: center; padding: 1.25rem; border-radius: 8px; background: var(--db-gray); }
+  .scale-card .number { font-size: 2rem; font-weight: 700; color: var(--db-red); }
+  .scale-card .label { font-size: 0.8rem; color: #666; margin-top: 4px; }
+
+  /* Footer */
+  footer { background: var(--db-gray); padding: 1.5rem 3rem; font-size: 0.8rem; color: #666; margin-top: 2rem; }
+
+  @media (max-width: 768px) {
+    .card-grid { grid-template-columns: 1fr; }
+    .pros-cons { grid-template-columns: 1fr; }
+    .scale-grid { grid-template-columns: 1fr; }
+    header, .tabs, .section, footer { padding-left: 1.5rem; padding-right: 1.5rem; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Multi-Tenant Genie Architecture <span class="badge">BCD Travel / Advito</span></h1>
+  <p>Three approaches for per-client data isolation with Databricks Genie API</p>
+</header>
+
+<div class="tabs">
+  <div class="tab active" onclick="showTab('overview')">Overview</div>
+  <div class="tab" onclick="showTab('pattern-a')">Pattern A: SP-per-Client</div>
+  <div class="tab" onclick="showTab('pattern-b')">Pattern B: Custom Claims</div>
+  <div class="tab" onclick="showTab('pattern-c')">Pattern C: User Provisioning</div>
+  <div class="tab" onclick="showTab('compare')">Comparison</div>
+  <div class="tab" onclick="showTab('decision')">Decision Tree</div>
+</div>
+
+<!-- OVERVIEW -->
+<div class="section active" id="overview">
+  <h2>The Problem</h2>
+  <p class="subtitle">BCD Travel needs to expose Genie-powered analytics to ~10,000 external users across 1,000+ customers, each seeing only their own data.</p>
+
+  <div class="scale-grid">
+    <div class="scale-card">
+      <div class="number">10K</div>
+      <div class="label">External Users</div>
+    </div>
+    <div class="scale-card">
+      <div class="number">1K+</div>
+      <div class="label">Customer Tenants</div>
+    </div>
+    <div class="scale-card">
+      <div class="number">5/min</div>
+      <div class="label">Genie Rate Limit (per workspace)</div>
+    </div>
+  </div>
+
+  <div class="context-box">
+    <h4>BCD-Specific Context</h4>
+    <ul>
+      <li>External users via Azure AD B2C — users never see Databricks</li>
+      <li>Current approach: non-deterministic function + prompt-based isolation (fragile)</li>
+      <li>Advito (sister org, ~600 users) shares same account, different workspace</li>
+      <li>Custom claims (<code>current_oauth_custom_identity_claims()</code>) support on Genie surface is under active escalation</li>
+    </ul>
+  </div>
+
+  <h2>Three Patterns</h2>
+  <div class="card-grid">
+    <div class="card recommended">
+      <h3>Pattern B: Shared SP + Custom Claims</h3>
+      <p>Single Service Principal for all clients. Tenant isolation via <code>custom_claim</code> in OAuth token. UC row filters enforce at query time.</p>
+      <div class="pros-cons">
+        <ul class="pro-list">
+          <li>O(1) operational overhead</li>
+          <li>Scales to millions of tenants</li>
+          <li>Onboarding = 1 DB insert</li>
+        </ul>
+        <ul class="con-list">
+          <li>Genie surface support unverified</li>
+          <li>Single SP = shared blast radius</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card fallback">
+      <h3>Pattern A: SP-per-Client</h3>
+      <p>Each customer gets a dedicated Service Principal. RLS via <code>session_user()</code> mapped to tenant ID.</p>
+      <div class="pros-cons">
+        <ul class="pro-list">
+          <li>Works today — no Genie gap</li>
+          <li>Per-client compute attribution</li>
+          <li>Blast radius per SP</li>
+        </ul>
+        <ul class="con-list">
+          <li>O(N) SP management overhead</li>
+          <li>5,000 SPs to manage</li>
+          <li>Secret rotation at scale</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card not-recommended">
+      <h3>Pattern C: User Provisioning (SCIM)</h3>
+      <p>Provision each external user as a Databricks user. Native identity-based access control.</p>
+      <div class="pros-cons">
+        <ul class="pro-list">
+          <li>Native Databricks identity</li>
+          <li>Full audit per user</li>
+        </ul>
+        <ul class="con-list">
+          <li>10K users = licensing + provisioning burden</li>
+          <li>External users in Databricks platform</li>
+          <li>Only viable for Advito (600 internal users)</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PATTERN A -->
+<div class="section" id="pattern-a">
+  <h2>Pattern A: SP-per-Client</h2>
+  <p class="subtitle">Each customer gets a dedicated Databricks Service Principal. Data isolation via <code>session_user()</code>.</p>
+
+  <div class="diagram-box">
+    <svg viewBox="0 0 900 340" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:900px">
+      <!-- Client tier -->
+      <rect x="20" y="20" width="130" height="50" rx="8" fill="#DBEAFE" stroke="#93C5FD" stroke-width="1.5"/>
+      <text x="85" y="50" text-anchor="middle" font-size="13" font-weight="600" fill="#1E40AF">Client A</text>
+      <rect x="20" y="80" width="130" height="50" rx="8" fill="#DBEAFE" stroke="#93C5FD" stroke-width="1.5"/>
+      <text x="85" y="110" text-anchor="middle" font-size="13" font-weight="600" fill="#1E40AF">Client B</text>
+      <rect x="20" y="140" width="130" height="50" rx="8" fill="#DBEAFE" stroke="#93C5FD" stroke-width="1.5"/>
+      <text x="85" y="170" text-anchor="middle" font-size="13" font-weight="600" fill="#1E40AF">Client C</text>
+      <text x="85" y="215" text-anchor="middle" font-size="12" fill="#666">. . .</text>
+      <rect x="20" y="230" width="130" height="50" rx="8" fill="#DBEAFE" stroke="#93C5FD" stroke-width="1.5"/>
+      <text x="85" y="260" text-anchor="middle" font-size="13" font-weight="600" fill="#1E40AF">Client N</text>
+
+      <!-- Arrows to proxy -->
+      <line x1="150" y1="45" x2="230" y2="130" stroke="#93C5FD" stroke-width="2" marker-end="url(#arrow-blue)"/>
+      <line x1="150" y1="105" x2="230" y2="140" stroke="#93C5FD" stroke-width="2" marker-end="url(#arrow-blue)"/>
+      <line x1="150" y1="165" x2="230" y2="155" stroke="#93C5FD" stroke-width="2" marker-end="url(#arrow-blue)"/>
+      <line x1="150" y1="255" x2="230" y2="170" stroke="#93C5FD" stroke-width="2" marker-end="url(#arrow-blue)"/>
+
+      <!-- Proxy -->
+      <rect x="230" y="100" width="160" height="100" rx="10" fill="#F3E8FF" stroke="#C084FC" stroke-width="2"/>
+      <text x="310" y="135" text-anchor="middle" font-size="14" font-weight="700" fill="#5B21B6">Proxy App</text>
+      <text x="310" y="155" text-anchor="middle" font-size="11" fill="#7C3AED">Auth + Tenant Lookup</text>
+      <text x="310" y="175" text-anchor="middle" font-size="11" fill="#7C3AED">SP Selection</text>
+
+      <!-- SP tokens -->
+      <rect x="430" y="20" width="140" height="42" rx="6" fill="#FEF3C7" stroke="#FBBF24" stroke-width="1.5"/>
+      <text x="500" y="36" text-anchor="middle" font-size="11" font-weight="600" fill="#92400E">SP-A Token</text>
+      <text x="500" y="52" text-anchor="middle" font-size="10" fill="#92400E">session_user=SP-A</text>
+
+      <rect x="430" y="72" width="140" height="42" rx="6" fill="#FEF3C7" stroke="#FBBF24" stroke-width="1.5"/>
+      <text x="500" y="88" text-anchor="middle" font-size="11" font-weight="600" fill="#92400E">SP-B Token</text>
+      <text x="500" y="104" text-anchor="middle" font-size="10" fill="#92400E">session_user=SP-B</text>
+
+      <rect x="430" y="124" width="140" height="42" rx="6" fill="#FEF3C7" stroke="#FBBF24" stroke-width="1.5"/>
+      <text x="500" y="140" text-anchor="middle" font-size="11" font-weight="600" fill="#92400E">SP-C Token</text>
+      <text x="500" y="156" text-anchor="middle" font-size="10" fill="#92400E">session_user=SP-C</text>
+
+      <text x="500" y="185" text-anchor="middle" font-size="12" fill="#666">. . .</text>
+
+      <rect x="430" y="196" width="140" height="42" rx="6" fill="#FEF3C7" stroke="#FBBF24" stroke-width="1.5"/>
+      <text x="500" y="212" text-anchor="middle" font-size="11" font-weight="600" fill="#92400E">SP-N Token</text>
+      <text x="500" y="228" text-anchor="middle" font-size="10" fill="#92400E">session_user=SP-N</text>
+
+      <!-- Arrows proxy to SPs -->
+      <line x1="390" y1="130" x2="430" y2="41" stroke="#C084FC" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+      <line x1="390" y1="140" x2="430" y2="93" stroke="#C084FC" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+      <line x1="390" y1="150" x2="430" y2="145" stroke="#C084FC" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+      <line x1="390" y1="170" x2="430" y2="217" stroke="#C084FC" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+
+      <!-- Genie -->
+      <rect x="620" y="85" width="120" height="60" rx="8" fill="#D1FAE5" stroke="#6EE7B7" stroke-width="1.5"/>
+      <text x="680" y="112" text-anchor="middle" font-size="14" font-weight="700" fill="#065F46">Genie</text>
+      <text x="680" y="130" text-anchor="middle" font-size="11" fill="#065F46">Space</text>
+
+      <line x1="570" y1="110" x2="620" y2="115" stroke="#6EE7B7" stroke-width="2" marker-end="url(#arrow-green)"/>
+
+      <!-- UC -->
+      <rect x="620" y="180" width="120" height="70" rx="8" fill="#FEE2E2" stroke="#FCA5A5" stroke-width="1.5"/>
+      <text x="680" y="205" text-anchor="middle" font-size="13" font-weight="700" fill="#991B1B">Unity Catalog</text>
+      <text x="680" y="222" text-anchor="middle" font-size="10" fill="#991B1B">session_user() =</text>
+      <text x="680" y="237" text-anchor="middle" font-size="10" fill="#991B1B">SP app_id</text>
+
+      <line x1="680" y1="145" x2="680" y2="180" stroke="#FCA5A5" stroke-width="2" marker-end="url(#arrow-red)"/>
+
+      <!-- Mapping table -->
+      <rect x="770" y="190" width="115" height="50" rx="6" fill="#E5E7EB" stroke="#9CA3AF" stroke-width="1"/>
+      <text x="827" y="212" text-anchor="middle" font-size="10" font-weight="600" fill="#374151">SP Mapping</text>
+      <text x="827" y="228" text-anchor="middle" font-size="9" fill="#374151">SP-A -> acme</text>
+
+      <line x1="740" y1="215" x2="770" y2="215" stroke="#9CA3AF" stroke-width="1" stroke-dasharray="4"/>
+
+      <!-- Key callout -->
+      <rect x="430" y="270" width="340" height="55" rx="8" fill="#FFF7ED" stroke="#FDBA74" stroke-width="1"/>
+      <text x="450" y="290" font-size="12" font-weight="600" fill="#9A3412">Key: Each client = 1 Service Principal</text>
+      <text x="450" y="310" font-size="11" fill="#9A3412">1,000 clients = 1,000 SPs to manage, rotate, audit</text>
+
+      <defs>
+        <marker id="arrow-blue" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#93C5FD"/></marker>
+        <marker id="arrow-purple" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#C084FC"/></marker>
+        <marker id="arrow-green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#6EE7B7"/></marker>
+        <marker id="arrow-red" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#FCA5A5"/></marker>
+      </defs>
+    </svg>
+  </div>
+
+  <h3 style="margin-top:1.5rem">How It Works</h3>
+  <ol style="padding-left:1.5rem; line-height:2; font-size:0.9rem">
+    <li>Client authenticates with Proxy via API key</li>
+    <li>Proxy looks up which SP belongs to this client (from Lakebase registry)</li>
+    <li>Proxy gets OAuth token for <strong>that specific SP</strong></li>
+    <li>Proxy calls Genie API with the SP's token</li>
+    <li>Genie executes SQL &rarr; UC sees <code>session_user() = SP-A's app_id</code></li>
+    <li>Row filter/dynamic view joins SP app_id &rarr; tenant_id, returns only that tenant's rows</li>
+  </ol>
+
+  <h3 style="margin-top:1.5rem">Operational Overhead</h3>
+  <table>
+    <tr><th>Task</th><th>Frequency</th><th>Effort</th></tr>
+    <tr><td>SP provisioning</td><td>Per new customer</td><td>API call + Lakebase insert + group add</td></tr>
+    <tr><td>Secret rotation</td><td>Before 730-day expiry</td><td>Per-SP rotation (1,000x at scale)</td></tr>
+    <tr><td>Offboarding</td><td>Per churned customer</td><td>Deactivate SP + clean up group</td></tr>
+    <tr><td>Mapping table sync</td><td>Continuous</td><td>Must stay in sync with SP lifecycle</td></tr>
+    <tr><td>Account API rate limits</td><td>During provisioning</td><td>~50 SP creations/min</td></tr>
+  </table>
+
+  <div class="context-box" style="margin-top:1.5rem">
+    <h4>BCD Context: VJ's Concern is Valid</h4>
+    <p>VJ raised that managing ~5,000 SPs is a significant operational burden. This is correct — it's essentially a service to build, not a script. However, Ibotta runs 1,300+ SPs as precedent. This pattern works today without waiting for custom claims on Genie.</p>
+  </div>
+</div>
+
+<!-- PATTERN B -->
+<div class="section" id="pattern-b">
+  <h2>Pattern B: Shared SP + Custom Claims</h2>
+  <p class="subtitle">Single Service Principal for all clients. Per-tenant isolation via <code>custom_claim</code> in the OAuth token.</p>
+
+  <div class="diagram-box">
+    <svg viewBox="0 0 900 300" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:900px">
+      <!-- Clients -->
+      <rect x="20" y="40" width="120" height="40" rx="8" fill="#DBEAFE" stroke="#93C5FD" stroke-width="1.5"/>
+      <text x="80" y="65" text-anchor="middle" font-size="12" font-weight="600" fill="#1E40AF">Client A</text>
+      <rect x="20" y="90" width="120" height="40" rx="8" fill="#DBEAFE" stroke="#93C5FD" stroke-width="1.5"/>
+      <text x="80" y="115" text-anchor="middle" font-size="12" font-weight="600" fill="#1E40AF">Client B</text>
+      <rect x="20" y="140" width="120" height="40" rx="8" fill="#DBEAFE" stroke="#93C5FD" stroke-width="1.5"/>
+      <text x="80" y="165" text-anchor="middle" font-size="12" font-weight="600" fill="#1E40AF">Client C</text>
+      <rect x="20" y="200" width="120" height="40" rx="8" fill="#DBEAFE" stroke="#93C5FD" stroke-width="1.5"/>
+      <text x="80" y="225" text-anchor="middle" font-size="12" font-weight="600" fill="#1E40AF">Client N</text>
+      <text x="80" y="192" text-anchor="middle" font-size="12" fill="#666">. . .</text>
+
+      <!-- Arrows to proxy -->
+      <line x1="140" y1="60" x2="220" y2="110" stroke="#93C5FD" stroke-width="2" marker-end="url(#ab)"/>
+      <line x1="140" y1="110" x2="220" y2="120" stroke="#93C5FD" stroke-width="2" marker-end="url(#ab)"/>
+      <line x1="140" y1="160" x2="220" y2="135" stroke="#93C5FD" stroke-width="2" marker-end="url(#ab)"/>
+      <line x1="140" y1="220" x2="220" y2="150" stroke="#93C5FD" stroke-width="2" marker-end="url(#ab)"/>
+
+      <!-- Proxy -->
+      <rect x="220" y="80" width="160" height="100" rx="10" fill="#F3E8FF" stroke="#C084FC" stroke-width="2"/>
+      <text x="300" y="112" text-anchor="middle" font-size="14" font-weight="700" fill="#5B21B6">Proxy App</text>
+      <text x="300" y="132" text-anchor="middle" font-size="11" fill="#7C3AED">Auth + Tenant Lookup</text>
+      <text x="300" y="152" text-anchor="middle" font-size="11" fill="#7C3AED">Token + custom_claim</text>
+
+      <!-- Single SP -->
+      <rect x="420" y="90" width="150" height="80" rx="8" fill="#FEF3C7" stroke="#FBBF24" stroke-width="2"/>
+      <text x="495" y="115" text-anchor="middle" font-size="13" font-weight="700" fill="#92400E">1 Shared SP</text>
+      <text x="495" y="135" text-anchor="middle" font-size="11" fill="#92400E">custom_claim=</text>
+      <text x="495" y="150" text-anchor="middle" font-size="11" font-weight="600" fill="#92400E">{tenant_id}</text>
+
+      <line x1="380" y1="130" x2="420" y2="130" stroke="#C084FC" stroke-width="2" marker-end="url(#ap)"/>
+
+      <!-- Genie -->
+      <rect x="620" y="70" width="120" height="55" rx="8" fill="#D1FAE5" stroke="#6EE7B7" stroke-width="1.5"/>
+      <text x="680" y="95" text-anchor="middle" font-size="14" font-weight="700" fill="#065F46">Genie</text>
+      <text x="680" y="112" text-anchor="middle" font-size="11" fill="#065F46">Space</text>
+
+      <line x1="570" y1="120" x2="620" y2="97" stroke="#6EE7B7" stroke-width="2" marker-end="url(#ag)"/>
+
+      <!-- UC -->
+      <rect x="620" y="155" width="250" height="75" rx="8" fill="#FEE2E2" stroke="#FCA5A5" stroke-width="1.5"/>
+      <text x="745" y="180" text-anchor="middle" font-size="13" font-weight="700" fill="#991B1B">Unity Catalog Row Filter</text>
+      <text x="745" y="200" text-anchor="middle" font-size="11" fill="#991B1B">WHERE tenant_id =</text>
+      <text x="745" y="218" text-anchor="middle" font-size="12" font-weight="600" fill="#991B1B">current_oauth_custom_identity_claims()</text>
+
+      <line x1="680" y1="125" x2="680" y2="155" stroke="#FCA5A5" stroke-width="2" marker-end="url(#ar)"/>
+
+      <!-- Key callout -->
+      <rect x="220" y="240" width="420" height="45" rx="8" fill="#ECFDF5" stroke="#6EE7B7" stroke-width="1"/>
+      <text x="240" y="260" font-size="12" font-weight="600" fill="#065F46">Key: ALL clients use the SAME SP</text>
+      <text x="240" y="275" font-size="11" fill="#065F46">1,000 clients = 1 SP + 1,000 rows in your registry. Claim in token = isolation.</text>
+
+      <defs>
+        <marker id="ab" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#93C5FD"/></marker>
+        <marker id="ap" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#C084FC"/></marker>
+        <marker id="ag" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#6EE7B7"/></marker>
+        <marker id="ar" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#FCA5A5"/></marker>
+      </defs>
+    </svg>
+  </div>
+
+  <h3 style="margin-top:1.5rem">How It Works</h3>
+  <ol style="padding-left:1.5rem; line-height:2; font-size:0.9rem">
+    <li>Client authenticates with Proxy via API key</li>
+    <li>Proxy resolves client &rarr; tenant_id from Lakebase registry</li>
+    <li>Proxy gets OAuth token from <strong>the single shared SP</strong> with <code>custom_claim=tenant_id</code></li>
+    <li>Proxy calls Genie API with the claims-bearing token</li>
+    <li>Genie executes SQL &rarr; UC reads <code>current_oauth_custom_identity_claims()</code></li>
+    <li>Row filter returns only rows where <code>tenant_id</code> matches the claim</li>
+  </ol>
+
+  <h3 style="margin-top:1.5rem">Onboarding Comparison</h3>
+  <table>
+    <tr><th>Action</th><th>Pattern A (SP-per-Client)</th><th>Pattern B (Custom Claims)</th></tr>
+    <tr><td>Add new customer</td><td>Create SP + secret + workspace assign + group add + mapping row</td><td><strong>INSERT INTO client_registry</strong></td></tr>
+    <tr><td>Remove customer</td><td>Deactivate SP + clean up groups</td><td><strong>UPDATE active=false</strong></td></tr>
+    <tr><td>Rotate secrets</td><td>Per-SP (1,000 rotations)</td><td><strong>1 rotation</strong></td></tr>
+    <tr><td>UC grants</td><td>Group-based (manageable)</td><td><strong>Single SP grant</strong></td></tr>
+  </table>
+
+  <div class="context-box" style="margin-top:1.5rem">
+    <h4>Blocker: Genie Surface Validation</h4>
+    <p><code>current_oauth_custom_identity_claims()</code> works for JDBC and SQL Execution API. Genie Conversation API support is under active escalation (Q2 priority, 17 use cases, 12 accounts, BCD named). Must verify before committing to this pattern.</p>
+  </div>
+</div>
+
+<!-- PATTERN C -->
+<div class="section" id="pattern-c">
+  <h2>Pattern C: User Provisioning (SCIM)</h2>
+  <p class="subtitle">Provision external users directly as Databricks users. Native identity-based access.</p>
+
+  <div class="diagram-box">
+    <svg viewBox="0 0 900 260" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:900px">
+      <!-- IdP -->
+      <rect x="20" y="60" width="150" height="80" rx="10" fill="#DBEAFE" stroke="#93C5FD" stroke-width="2"/>
+      <text x="95" y="90" text-anchor="middle" font-size="14" font-weight="700" fill="#1E40AF">Azure AD B2C</text>
+      <text x="95" y="110" text-anchor="middle" font-size="11" fill="#1E40AF">or AWS Cognito</text>
+      <text x="95" y="128" text-anchor="middle" font-size="10" fill="#1E40AF">(10K users)</text>
+
+      <!-- SCIM -->
+      <rect x="220" y="70" width="130" height="60" rx="8" fill="#F3E8FF" stroke="#C084FC" stroke-width="1.5"/>
+      <text x="285" y="97" text-anchor="middle" font-size="13" font-weight="700" fill="#5B21B6">SCIM Sync</text>
+      <text x="285" y="115" text-anchor="middle" font-size="10" fill="#7C3AED">JIT Provisioning</text>
+
+      <line x1="170" y1="100" x2="220" y2="100" stroke="#93C5FD" stroke-width="2" marker-end="url(#cb)"/>
+
+      <!-- Databricks Users -->
+      <rect x="400" y="40" width="170" height="120" rx="10" fill="#FEF3C7" stroke="#FBBF24" stroke-width="2"/>
+      <text x="485" y="68" text-anchor="middle" font-size="13" font-weight="700" fill="#92400E">Databricks Users</text>
+      <text x="485" y="88" text-anchor="middle" font-size="11" fill="#92400E">user-a@bcd.com</text>
+      <text x="485" y="105" text-anchor="middle" font-size="11" fill="#92400E">user-b@bcd.com</text>
+      <text x="485" y="122" text-anchor="middle" font-size="11" fill="#92400E">user-c@bcd.com</text>
+      <text x="485" y="145" text-anchor="middle" font-size="10" fill="#92400E">... 10,000 users</text>
+
+      <line x1="350" y1="100" x2="400" y2="100" stroke="#C084FC" stroke-width="2" marker-end="url(#cp)"/>
+
+      <!-- Genie -->
+      <rect x="620" y="50" width="120" height="55" rx="8" fill="#D1FAE5" stroke="#6EE7B7" stroke-width="1.5"/>
+      <text x="680" y="75" text-anchor="middle" font-size="14" font-weight="700" fill="#065F46">Genie</text>
+      <text x="680" y="92" text-anchor="middle" font-size="11" fill="#065F46">Space</text>
+
+      <line x1="570" y1="90" x2="620" y2="77" stroke="#6EE7B7" stroke-width="2" marker-end="url(#cg)"/>
+
+      <!-- UC -->
+      <rect x="620" y="130" width="250" height="60" rx="8" fill="#FEE2E2" stroke="#FCA5A5" stroke-width="1.5"/>
+      <text x="745" y="155" text-anchor="middle" font-size="13" font-weight="700" fill="#991B1B">Unity Catalog</text>
+      <text x="745" y="175" text-anchor="middle" font-size="11" fill="#991B1B">Group membership / row filters</text>
+
+      <line x1="680" y1="105" x2="680" y2="130" stroke="#FCA5A5" stroke-width="2" marker-end="url(#cr)"/>
+
+      <!-- Callout -->
+      <rect x="220" y="195" width="440" height="45" rx="8" fill="#FEE2E2" stroke="#FCA5A5" stroke-width="1"/>
+      <text x="240" y="215" font-size="12" font-weight="600" fill="#991B1B">Not recommended for BCD (10K external users)</text>
+      <text x="240" y="230" font-size="11" fill="#991B1B">Viable for Advito (~600 internal users with SCIM provisioning)</text>
+
+      <defs>
+        <marker id="cb" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#93C5FD"/></marker>
+        <marker id="cp" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#C084FC"/></marker>
+        <marker id="cg" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#6EE7B7"/></marker>
+        <marker id="cr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#FCA5A5"/></marker>
+      </defs>
+    </svg>
+  </div>
+
+  <div class="context-box">
+    <h4>When This Makes Sense</h4>
+    <ul>
+      <li><strong>Advito (~600 users):</strong> Internal users, AWS Cognito auth, SCIM provisioning is the clear path</li>
+      <li><strong>BCD (10K users):</strong> External users via Azure AD B2C — too many users, licensing burden, users never need to see Databricks</li>
+    </ul>
+  </div>
+</div>
+
+<!-- COMPARISON -->
+<div class="section" id="compare">
+  <h2>Side-by-Side Comparison</h2>
+  <p class="subtitle">How the three patterns compare across key dimensions for BCD Travel.</p>
+
+  <table>
+    <tr>
+      <th>Dimension</th>
+      <th style="background:#065F46">B: Custom Claims</th>
+      <th style="background:#92400E">A: SP-per-Client</th>
+      <th style="background:#666">C: User Provisioning</th>
+    </tr>
+    <tr>
+      <td><strong>SP management</strong></td>
+      <td><span class="check">1 SP total</span></td>
+      <td><span class="warn">1,000+ SPs</span></td>
+      <td><span class="check">0 SPs (user identity)</span></td>
+    </tr>
+    <tr>
+      <td><strong>Onboarding a customer</strong></td>
+      <td><span class="check">1 DB row insert</span></td>
+      <td><span class="warn">SP + secret + group + mapping</span></td>
+      <td><span class="cross">SCIM sync 10-50 users</span></td>
+    </tr>
+    <tr>
+      <td><strong>Offboarding</strong></td>
+      <td><span class="check">UPDATE active=false</span></td>
+      <td><span class="warn">Deactivate SP, clean groups</span></td>
+      <td><span class="warn">Remove from SCIM groups</span></td>
+    </tr>
+    <tr>
+      <td><strong>Secret rotation</strong></td>
+      <td><span class="check">1 rotation</span></td>
+      <td><span class="cross">1,000+ rotations</span></td>
+      <td><span class="check">N/A (user passwords)</span></td>
+    </tr>
+    <tr>
+      <td><strong>Blast radius if compromised</strong></td>
+      <td><span class="warn">All tenants (proxy is the gate)</span></td>
+      <td><span class="check">1 tenant per SP</span></td>
+      <td><span class="check">1 user</span></td>
+    </tr>
+    <tr>
+      <td><strong>Scaling</strong></td>
+      <td><span class="check">O(1)</span></td>
+      <td><span class="warn">O(N)</span></td>
+      <td><span class="cross">O(users) — 10K+</span></td>
+    </tr>
+    <tr>
+      <td><strong>Compute attribution</strong></td>
+      <td><span class="warn">App-level audit logs</span></td>
+      <td><span class="check">Per-SP in system tables</span></td>
+      <td><span class="check">Per-user in system tables</span></td>
+    </tr>
+    <tr>
+      <td><strong>Works on Genie today?</strong></td>
+      <td><span class="cross">Unverified — active escalation</span></td>
+      <td><span class="check">Yes — session_user() works</span></td>
+      <td><span class="check">Yes — native identity</span></td>
+    </tr>
+    <tr>
+      <td><strong>RLS mechanism</strong></td>
+      <td>current_oauth_custom_identity_claims()</td>
+      <td>session_user() + mapping table</td>
+      <td>is_account_group_member() or session_user()</td>
+    </tr>
+    <tr>
+      <td><strong>Proxy complexity</strong></td>
+      <td>Token minting with custom_claim</td>
+      <td>SP selection + credential lookup</td>
+      <td>Optional (users can access Genie directly)</td>
+    </tr>
+    <tr>
+      <td><strong>BCD fit</strong></td>
+      <td><span class="check"><strong>Best — if claims work on Genie</strong></span></td>
+      <td><span class="warn"><strong>Good fallback — works today</strong></span></td>
+      <td><span class="cross"><strong>Poor — too many external users</strong></span></td>
+    </tr>
+  </table>
+
+  <h2 style="margin-top:2rem">Recommended Strategy</h2>
+  <div class="card-grid">
+    <div class="card" style="border-color: var(--green); border-width: 2px;">
+      <h3 style="color: var(--green);">Phase 1: Start with Pattern A (Now)</h3>
+      <p>Deploy SP-per-client for the April pilot. Works today, proven at scale (Ibotta runs 1,300+ SPs). Build the SP lifecycle automation as a service.</p>
+    </div>
+    <div class="card" style="border-color: var(--blue); border-width: 2px;">
+      <h3 style="color: var(--blue);">Phase 2: Migrate to Pattern B (When Ready)</h3>
+      <p>Once custom claims are validated on Genie surface (Q2 escalation), migrate to shared SP. The proxy architecture is the same — only the token minting changes.</p>
+    </div>
+    <div class="card" style="border-color: var(--purple); border-width: 2px;">
+      <h3 style="color: var(--purple);">Advito: Pattern C (Parallel)</h3>
+      <p>Advito's 600 internal users are a clean SCIM provisioning case. Run this in parallel — different workspace, different auth (AWS Cognito).</p>
+    </div>
+  </div>
+</div>
+
+<!-- DECISION TREE -->
+<div class="section" id="decision">
+  <h2>Decision Tree</h2>
+  <p class="subtitle">Which pattern fits your scenario?</p>
+
+  <div class="diagram-box">
+    <svg viewBox="0 0 900 520" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:900px">
+      <!-- Q1 -->
+      <rect x="280" y="10" width="340" height="50" rx="10" fill="#DBEAFE" stroke="#2563EB" stroke-width="2"/>
+      <text x="450" y="40" text-anchor="middle" font-size="13" font-weight="600" fill="#1E40AF">Are users internal (can see Databricks)?</text>
+
+      <!-- Yes -> C -->
+      <line x1="350" y1="60" x2="200" y2="110" stroke="#0D9F6E" stroke-width="2" marker-end="url(#da)"/>
+      <text x="260" y="80" font-size="11" font-weight="700" fill="#0D9F6E">Yes</text>
+
+      <rect x="80" y="110" width="240" height="50" rx="10" fill="#D1FAE5" stroke="#0D9F6E" stroke-width="2"/>
+      <text x="200" y="130" text-anchor="middle" font-size="12" font-weight="700" fill="#065F46">Pattern C: User Provisioning</text>
+      <text x="200" y="148" text-anchor="middle" font-size="11" fill="#065F46">SCIM sync + native Genie access</text>
+
+      <!-- No -> Q2 -->
+      <line x1="550" y1="60" x2="650" y2="110" stroke="#DC2626" stroke-width="2" marker-end="url(#da)"/>
+      <text x="610" y="80" font-size="11" font-weight="700" fill="#DC2626">No (external)</text>
+
+      <rect x="480" y="110" width="340" height="50" rx="10" fill="#DBEAFE" stroke="#2563EB" stroke-width="2"/>
+      <text x="650" y="130" text-anchor="middle" font-size="13" font-weight="600" fill="#1E40AF">How many customer tenants?</text>
+      <text x="650" y="148" text-anchor="middle" font-size="11" fill="#1E40AF">(not users — distinct orgs)</text>
+
+      <!-- <500 -->
+      <line x1="550" y1="160" x2="400" y2="210" stroke="#D97706" stroke-width="2" marker-end="url(#da)"/>
+      <text x="455" y="185" font-size="11" font-weight="700" fill="#D97706">&lt; 500</text>
+
+      <rect x="250" y="210" width="300" height="50" rx="10" fill="#FEF3C7" stroke="#D97706" stroke-width="2"/>
+      <text x="400" y="230" text-anchor="middle" font-size="12" font-weight="700" fill="#92400E">Pattern A: SP-per-Client</text>
+      <text x="400" y="248" text-anchor="middle" font-size="11" fill="#92400E">Manageable SP count, works today</text>
+
+      <!-- >500 -> Q3 -->
+      <line x1="750" y1="160" x2="750" y2="210" stroke="#2563EB" stroke-width="2" marker-end="url(#da)"/>
+      <text x="765" y="190" font-size="11" font-weight="700" fill="#2563EB">500+</text>
+
+      <rect x="580" y="210" width="340" height="50" rx="10" fill="#DBEAFE" stroke="#2563EB" stroke-width="2"/>
+      <text x="750" y="233" text-anchor="middle" font-size="13" font-weight="600" fill="#1E40AF">custom_claim on Genie validated?</text>
+
+      <!-- Yes -> B -->
+      <line x1="650" y1="260" x2="500" y2="320" stroke="#0D9F6E" stroke-width="2" marker-end="url(#da)"/>
+      <text x="560" y="285" font-size="11" font-weight="700" fill="#0D9F6E">Yes</text>
+
+      <rect x="300" y="320" width="300" height="50" rx="10" fill="#D1FAE5" stroke="#0D9F6E" stroke-width="2"/>
+      <text x="450" y="340" text-anchor="middle" font-size="12" font-weight="700" fill="#065F46">Pattern B: Shared SP + Custom Claims</text>
+      <text x="450" y="358" text-anchor="middle" font-size="11" fill="#065F46">O(1) scaling, recommended long-term</text>
+
+      <!-- No -> hybrid -->
+      <line x1="850" y1="260" x2="850" y2="320" stroke="#DC2626" stroke-width="2" marker-end="url(#da)"/>
+      <text x="865" y="290" font-size="11" font-weight="700" fill="#DC2626">Not yet</text>
+
+      <rect x="680" y="320" width="200" height="70" rx="10" fill="#FEF3C7" stroke="#D97706" stroke-width="2"/>
+      <text x="780" y="345" text-anchor="middle" font-size="12" font-weight="700" fill="#92400E">Start with A</text>
+      <text x="780" y="363" text-anchor="middle" font-size="11" fill="#92400E">Plan migration to B</text>
+      <text x="780" y="378" text-anchor="middle" font-size="10" fill="#92400E">when claims land on Genie</text>
+
+      <!-- BCD callout -->
+      <rect x="200" y="420" width="500" height="80" rx="12" fill="#FFF7ED" stroke="#FB923C" stroke-width="2"/>
+      <text x="450" y="445" text-anchor="middle" font-size="14" font-weight="700" fill="#9A3412">BCD Travel = Here</text>
+      <text x="450" y="465" text-anchor="middle" font-size="12" fill="#9A3412">1,000+ tenants, external users, custom claims unverified on Genie</text>
+      <text x="450" y="485" text-anchor="middle" font-size="12" fill="#9A3412">Recommendation: Start Pattern A now, migrate to B when validated</text>
+
+      <line x1="780" y1="390" x2="650" y2="420" stroke="#FB923C" stroke-width="1.5" stroke-dasharray="6"/>
+
+      <defs>
+        <marker id="da" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#666"/></marker>
+      </defs>
+    </svg>
+  </div>
+
+  <h2 style="margin-top:2rem">Key Questions for Your Team</h2>
+  <div class="card-grid">
+    <div class="card">
+      <h3>1. Custom Claims Timeline</h3>
+      <p>When will <code>current_oauth_custom_identity_claims()</code> be validated on the Genie surface? This determines if we start with A or go straight to B.</p>
+    </div>
+    <div class="card">
+      <h3>2. SP Management Appetite</h3>
+      <p>Is VJ's team willing to build and operate an SP lifecycle service (provisioning, rotation, offboarding) for 1,000+ SPs? If not, we need to push harder on custom claims.</p>
+    </div>
+    <div class="card">
+      <h3>3. April Pilot Scope</h3>
+      <p>How many tenants in the pilot? If &lt;50, Pattern A is trivial. If hundreds, the management burden starts immediately.</p>
+    </div>
+    <div class="card">
+      <h3>4. Advito Timeline</h3>
+      <p>Is Advito's SCIM provisioning (Pattern C) independent? Can it proceed in parallel with BCD's proxy architecture?</p>
+    </div>
+    <div class="card">
+      <h3>5. Rate Limit Strategy</h3>
+      <p>5 questions/min/workspace. With 1,000+ clients, do we need multi-workspace round-robin from day one, or is pilot volume manageable?</p>
+    </div>
+    <div class="card">
+      <h3>6. Security Review</h3>
+      <p>Pattern B's single SP has access to all tenant data (row filter is the boundary). Does BCD's security team need per-SP isolation (Pattern A)?</p>
+    </div>
+  </div>
+</div>
+
+<footer>
+  Multi-Tenant Genie Architecture Options &mdash; BCD Travel / Advito &mdash; Generated 2026-03-30
+</footer>
+
+<script>
+function showTab(id) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+</body>
+</html>
