@@ -33,3 +33,7 @@ Thumbs.db
 *secret*
 *.pem
 *.key
+
+# Bulk-onboard outcome reports (contain plaintext OAuth secrets)
+bulk-onboard-report*.json
+*-onboard-report*.json
