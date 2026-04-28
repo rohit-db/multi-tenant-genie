@@ -100,6 +100,7 @@ class GenieClient:
         columns: list[str] = []
         sql: str | None = None
         answer_text: str | None = None
+        final_status = msg.get("status", "UNKNOWN")
 
         for attachment in msg.get("attachments", []) or []:
             if "query" in attachment:
@@ -125,6 +126,20 @@ class GenieClient:
             if "text" in attachment:
                 answer_text = attachment["text"].get("content") or answer_text
 
+        if final_status != "COMPLETED" and not answer_text:
+            err = msg.get("error")
+            if isinstance(err, dict):
+                answer_text = (
+                    err.get("message")
+                    or err.get("error_message")
+                    or err.get("text")
+                    or str(err)
+                )
+            elif isinstance(err, str):
+                answer_text = err
+            if not answer_text:
+                answer_text = f"Genie returned status {final_status}"
+
         return GenieResponse(
             question=question,
             answer_text=answer_text,
@@ -134,7 +149,7 @@ class GenieClient:
             latency_ms=int((time.time() - started) * 1000),
             conversation_id=conversation_id,
             message_id=message_id,
-            status=msg.get("status", "UNKNOWN"),
+            status=final_status,
             raw=msg,
         )
 

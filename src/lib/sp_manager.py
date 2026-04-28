@@ -345,6 +345,7 @@ class SPManager:
         detail: str | None = None,
         latency_ms: int | None = None,
         status: str = "ok",
+        question: str | None = None,
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         actor = "unknown"
@@ -352,7 +353,10 @@ class SPManager:
             actor = self.w.current_user.me().user_name or "unknown"
         except Exception:
             pass
-        detail_sql = "NULL" if detail is None else f"'{detail.replace(chr(39), chr(39)*2)}'"
+
+        def _q(v: str | None) -> str:
+            return "NULL" if v is None else f"'{v.replace(chr(39), chr(39)*2)}'"
+
         latency_sql = "NULL" if latency_ms is None else str(int(latency_ms))
         self._execute_sql(
             f"""
@@ -360,7 +364,7 @@ class SPManager:
               (event_time, actor, tenant_id, action, sp_app_id, question,
                latency_ms, status, detail)
             VALUES (TIMESTAMP'{now}', '{actor}', '{tenant_id}', '{action}',
-                    '{sp_app_id}', NULL, {latency_sql}, '{status}', {detail_sql})
+                    '{sp_app_id}', {_q(question)}, {latency_sql}, '{status}', {_q(detail)})
             """
         )
 

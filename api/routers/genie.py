@@ -78,6 +78,19 @@ def _ask_sync(tenant_id: str, question: str, conversation_id: str | None = None)
         conversation_id=conversation_id,
         timeout_s=120,
     )
+    # Best-effort audit log; never fail the request if logging fails.
+    try:
+        _mgr()._audit(
+            'query',
+            tenant.tenant_id,
+            tenant.sp_app_id,
+            question=resp.question,
+            latency_ms=resp.latency_ms,
+            status='ok' if resp.status == 'COMPLETED' else 'error',
+            detail=None if resp.status == 'COMPLETED' else f'genie_status={resp.status}',
+        )
+    except Exception:
+        pass
     return AskResponse(
         tenant_id=tenant.tenant_id,
         tenant_name=tenant.tenant_name,
@@ -92,6 +105,37 @@ def _ask_sync(tenant_id: str, question: str, conversation_id: str | None = None)
         message_id=resp.message_id,
         status=resp.status,
     )
+
+
+def _ask_safe(tenant_id: str, question: str) -> AskResponse:
+    """Sweep-friendly variant: never raises. Returns a FAILED stub on error."""
+    try:
+        return _ask_sync(tenant_id, question)
+    except Exception as e:
+        tenant_name = tenant_id
+        sp_app_id = ''
+        try:
+            for t in _mgr().list_tenants():
+                if t.tenant_id == tenant_id:
+                    tenant_name = t.tenant_name
+                    sp_app_id = t.sp_app_id
+                    break
+        except Exception:
+            pass
+        return AskResponse(
+            tenant_id=tenant_id,
+            tenant_name=tenant_name,
+            sp_app_id=sp_app_id,
+            question=question,
+            answer_text=f'Error: {e}',
+            sql=None,
+            columns=[],
+            rows=[],
+            latency_ms=0,
+            conversation_id=None,
+            message_id=None,
+            status='FAILED',
+        )
 
 
 @router.post('/ask', response_model=AskResponse)
@@ -111,16 +155,12 @@ async def sweep(req: SweepRequest) -> list[AskResponse]:
         tenants = [t for t in _mgr().list_tenants() if t.status == 'active']
         loop = asyncio.get_event_loop()
         futures = [
-            loop.run_in_executor(_pool, _ask_sync, t.tenant_id, req.question)
+            loop.run_in_executor(_pool, _ask_safe, t.tenant_id, req.question)
             for t in tenants
         ]
         results: list[AskResponse] = []
         for f in asyncio.as_completed(futures):
-            try:
-                results.append(await f)
-            except Exception as e:
-                # Surface the failure as a fake AskResponse so the UI sees it
-                pass
+            results.append(await f)
         return results
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

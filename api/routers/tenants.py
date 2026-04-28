@@ -54,6 +54,23 @@ def _secret_key(tenant_id: str) -> str:
     return f'MT_GENIE_SECRET_{tenant_id.upper()}'
 
 
+def _invalidate_minter_cache(sp_app_id: str) -> None:
+    """Force the next request to mint a fresh token for this SP.
+
+    Note: a JWT already issued by Databricks remains valid until its TTL
+    (~1h) regardless of cache state — UC will still honor it. Invalidation
+    only changes what the next mint call does. For deactivation, the SP
+    secret is also deleted, so the next mint will fail (correctly).
+    """
+    if not sp_app_id:
+        return
+    try:
+        from .genie import _minter  # late import: genie.py imports from here
+        _minter.invalidate(sp_app_id)
+    except Exception:
+        pass
+
+
 class Tenant(BaseModel):
     tenant_id: str
     tenant_name: str
@@ -152,6 +169,10 @@ async def rotate(tenant_id: str) -> RotateResponse:
         secrets = _load_secrets()
         secrets[_secret_key(tenant_id)] = new_secret
         _save_secrets(secrets)
+        for t in _mgr().list_tenants():
+            if t.tenant_id == tenant_id:
+                _invalidate_minter_cache(t.sp_app_id)
+                break
         return RotateResponse(tenant_id=tenant_id, new_client_secret=new_secret)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -160,10 +181,16 @@ async def rotate(tenant_id: str) -> RotateResponse:
 @router.post('/{tenant_id}/deactivate')
 async def deactivate(tenant_id: str) -> dict[str, Any]:
     try:
+        sp_app_id = ''
+        for t in _mgr().list_tenants():
+            if t.tenant_id == tenant_id:
+                sp_app_id = t.sp_app_id
+                break
         _mgr().deactivate_tenant(tenant_id)
         secrets = _load_secrets()
         secrets.pop(_secret_key(tenant_id), None)
         _save_secrets(secrets)
+        _invalidate_minter_cache(sp_app_id)
         return {'ok': True, 'tenant_id': tenant_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
