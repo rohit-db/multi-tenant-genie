@@ -169,6 +169,34 @@ async def deactivate(tenant_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post('/{tenant_id}/reactivate', response_model=RotateResponse)
+async def reactivate(tenant_id: str) -> RotateResponse:
+    try:
+        new_secret = _mgr().reactivate_tenant(tenant_id)
+        for t in _mgr().list_tenants():
+            if t.tenant_id == tenant_id:
+                _invalidate_minter_cache(t.sp_app_id)
+                break
+        return RotateResponse(tenant_id=tenant_id, new_client_secret=new_secret)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete('/{tenant_id}')
+async def delete(tenant_id: str) -> dict[str, Any]:
+    try:
+        sp_app_id = ''
+        for t in _mgr().list_tenants():
+            if t.tenant_id == tenant_id:
+                sp_app_id = t.sp_app_id
+                break
+        _mgr().delete_tenant(tenant_id)
+        _invalidate_minter_cache(sp_app_id)
+        return {'ok': True, 'tenant_id': tenant_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get('/audit', response_model=list[AuditRow])
 async def audit(limit: int = 50) -> list[AuditRow]:
     try:
