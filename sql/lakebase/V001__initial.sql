@@ -32,16 +32,16 @@ CREATE TABLE sp_credentials (
 -- Audit Log
 CREATE TABLE audit_log (
     id BIGSERIAL PRIMARY KEY,
-    tenant_id VARCHAR(255) NOT NULL,
-    client_ip INET,
-    question TEXT NOT NULL,
+    tenant_id VARCHAR(255),
+    actor VARCHAR(255),
+    action VARCHAR(50) NOT NULL,                  -- onboard | rotate | deactivate | reactivate | delete | query
+    sp_app_id VARCHAR(255),
+    question TEXT,
     genie_space_id VARCHAR(255),
-    genie_conversation_id VARCHAR(255),
-    genie_message_id VARCHAR(255),
-    status VARCHAR(50) NOT NULL,                  -- pending, completed, failed, rate_limited
+    status VARCHAR(50) NOT NULL,                  -- pending | completed | failed | rate_limited | ok | error
     latency_ms INTEGER,
     rows_returned INTEGER,
-    error_message TEXT,
+    detail TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -61,6 +61,7 @@ CREATE INDEX idx_client_tenant ON client_registry(tenant_id);
 CREATE INDEX idx_audit_tenant_time ON audit_log(tenant_id, created_at DESC);
 CREATE INDEX idx_audit_created ON audit_log(created_at DESC);
 CREATE INDEX idx_audit_status ON audit_log(status);
+CREATE INDEX idx_audit_action ON audit_log(action);
 CREATE INDEX idx_token_expires ON token_cache(expires_at);
 
 -- Updated_at trigger
