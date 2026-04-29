@@ -238,6 +238,71 @@ class SPManager:
         tenant_repo.set_status(tenant_id, "deactivated")
         self._audit("deactivate", tenant_id, tenant.sp_app_id)
 
+    def reactivate_tenant(self, tenant_id: str) -> str:
+        """Re-enable a previously deactivated tenant. Returns the new client secret.
+
+        Reactivation is not a no-op — deactivation deletes the SP secret and
+        drops the credential row. We mint a fresh secret, store it, flip the SP
+        back to active, re-enable the mapping, and update status. Caller must
+        distribute the new secret to whoever was using the old one.
+        """
+        from server.lib.repository import (
+            tenant as tenant_repo, credential as cred_repo, mapping as mapping_repo
+        )
+        tenant = self._fetch_tenant(tenant_id)
+        sp_db_id = self._sp_db_id(tenant.sp_app_id)
+
+        # Re-enable the SP
+        self.w.service_principals.update(
+            id=sp_db_id, active=True,
+            application_id=tenant.sp_app_id, display_name=tenant.sp_display_name,
+        )
+        # Mint fresh OAuth secret
+        fresh = self.w.service_principal_secrets_proxy.create(
+            service_principal_id=sp_db_id
+        )
+        cred_repo.put(tenant.sp_app_id, fresh.secret)
+        mapping_repo.activate_mapping(self.w, self.warehouse_id, tenant.sp_app_id)
+        tenant_repo.set_status(tenant_id, "active")
+        self._audit("reactivate", tenant_id, tenant.sp_app_id)
+        return fresh.secret
+
+    def delete_tenant(self, tenant_id: str) -> None:
+        """Hard delete: remove SP, mapping row, credential row, registry row.
+
+        Best-effort across the four resources — each cleanup is wrapped in
+        its own try block so a partial failure on one doesn't leave the
+        others orphaned. Final state: tenant_id no longer exists anywhere.
+        """
+        from server.lib.repository import (
+            tenant as tenant_repo, credential as cred_repo, mapping as mapping_repo
+        )
+        tenant = self._fetch_tenant(tenant_id)
+        sp_app_id = tenant.sp_app_id
+
+        # 1. Delete SP (also removes its OAuth secrets)
+        try:
+            sp_db_id = self._sp_db_id(sp_app_id)
+            self.w.service_principals.delete(id=sp_db_id)
+        except Exception as e:
+            logger.warning("Could not delete SP %s: %s", sp_app_id, e)
+
+        # 2. Drop UC mapping row
+        try:
+            mapping_repo.delete_mapping(self.w, self.warehouse_id, sp_app_id)
+        except Exception as e:
+            logger.warning("Could not delete UC mapping for %s: %s", sp_app_id, e)
+
+        # 3. Drop Lakebase credential row
+        try:
+            cred_repo.delete(sp_app_id)
+        except Exception as e:
+            logger.warning("Could not delete credential for %s: %s", sp_app_id, e)
+
+        # 4. Drop Lakebase tenant row
+        tenant_repo.delete(tenant_id)
+        self._audit("delete", tenant_id, sp_app_id)
+
     def grant_genie_access(
         self, tenant_ids: Iterable[str] | None = None
     ) -> None:
