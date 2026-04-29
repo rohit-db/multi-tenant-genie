@@ -7,10 +7,12 @@ CREATE TABLE client_registry (
     id SERIAL PRIMARY KEY,
     tenant_id VARCHAR(255) UNIQUE NOT NULL,
     display_name VARCHAR(255) NOT NULL,
-    api_key_hash VARCHAR(255) UNIQUE NOT NULL,  -- bcrypt hash
-    tier VARCHAR(50) DEFAULT 'standard',         -- enterprise, standard, basic
+    sp_app_id VARCHAR(255) UNIQUE NOT NULL,
+    sp_display_name VARCHAR(255) NOT NULL,
+    genie_space_id VARCHAR(255),                      -- NULL → use workspace global
+    tier VARCHAR(50) DEFAULT 'standard',
     rate_limit_per_min INTEGER DEFAULT 3,
-    active BOOLEAN DEFAULT true,
+    status VARCHAR(50) NOT NULL DEFAULT 'active',     -- active | rotating | deactivated
     metadata JSONB DEFAULT '{}',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -53,9 +55,9 @@ CREATE TABLE token_cache (
 );
 
 -- Indexes
-CREATE INDEX idx_client_api_key ON client_registry(api_key_hash);
+CREATE INDEX idx_client_registry_status ON client_registry(status);
+CREATE INDEX idx_client_registry_sp_app ON client_registry(sp_app_id);
 CREATE INDEX idx_client_tenant ON client_registry(tenant_id);
-CREATE INDEX idx_client_active ON client_registry(active) WHERE active = true;
 CREATE INDEX idx_audit_tenant_time ON audit_log(tenant_id, created_at DESC);
 CREATE INDEX idx_audit_created ON audit_log(created_at DESC);
 CREATE INDEX idx_audit_status ON audit_log(status);
