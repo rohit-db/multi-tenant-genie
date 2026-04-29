@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from server.lib.sp_manager import SPManager
+from server.lib.repository import audit as audit_repo
 
 router = APIRouter()
 _mgr_singleton: SPManager | None = None
@@ -118,6 +119,19 @@ class BulkOnboardResponse(BaseModel):
     job_id: str
 
 
+class HistoryRow(BaseModel):
+    id: int
+    tenant_id: str | None
+    actor: str | None
+    action: str
+    sp_app_id: str | None
+    question: str | None
+    status: str
+    latency_ms: int | None
+    detail: str | None
+    created_at: datetime
+
+
 @router.post('/bulk', response_model=BulkOnboardResponse)
 async def bulk_onboard(req: BulkOnboardRequest) -> BulkOnboardResponse:
     if not req.tenants:
@@ -182,6 +196,15 @@ async def delete(tenant_id: str) -> dict[str, Any]:
         _mgr().delete_tenant(tenant_id)
         _invalidate_minter_cache(sp_app_id)
         return {'ok': True, 'tenant_id': tenant_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get('/{tenant_id}/history', response_model=list[HistoryRow])
+async def history(tenant_id: str, limit: int = 50) -> list[HistoryRow]:
+    try:
+        rows = audit_repo.history_for_tenant(tenant_id, limit=limit)
+        return [HistoryRow(**r.__dict__) for r in rows]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
