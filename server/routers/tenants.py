@@ -8,7 +8,6 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from server.lib.config import CONFIG
 from server.lib.sp_manager import SPManager
 
 router = APIRouter()
@@ -63,16 +62,6 @@ class OnboardResponse(BaseModel):
 class RotateResponse(BaseModel):
     tenant_id: str
     new_client_secret: str
-
-
-class AuditRow(BaseModel):
-    event_time: datetime | None
-    actor: str | None
-    tenant_id: str | None
-    action: str | None
-    sp_app_id: str | None
-    status: str | None
-    detail: str | None
 
 
 @router.get('', response_model=list[Tenant])
@@ -197,60 +186,3 @@ async def delete(tenant_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get('/audit', response_model=list[AuditRow])
-async def audit(limit: int = 50) -> list[AuditRow]:
-    try:
-        rows = _mgr()._execute_sql(
-            f"""SELECT event_time, actor, tenant_id, action, sp_app_id, status, detail
-                FROM {CONFIG.fq_audit}
-                ORDER BY event_time DESC
-                LIMIT {int(limit)}"""
-        )
-        out: list[AuditRow] = []
-        for r in rows:
-            out.append(
-                AuditRow(
-                    event_time=_parse_ts(r[0]),
-                    actor=r[1],
-                    tenant_id=r[2],
-                    action=r[3],
-                    sp_app_id=r[4],
-                    status=r[5],
-                    detail=r[6],
-                )
-            )
-        return out
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get('/mapping')
-async def mapping() -> list[dict[str, Any]]:
-    try:
-        rows = _mgr()._execute_sql(
-            f"""SELECT sp_app_id, tenant_id, active FROM {CONFIG.fq_mapping}
-                ORDER BY tenant_id"""
-        )
-        return [
-            {'sp_app_id': r[0], 'tenant_id': r[1], 'active': _parse_bool(r[2])}
-            for r in rows
-        ]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-def _parse_ts(v: Any) -> datetime | None:
-    if v is None:
-        return None
-    if isinstance(v, datetime):
-        return v
-    try:
-        return datetime.fromisoformat(str(v).replace('Z', '+00:00'))
-    except Exception:
-        return None
-
-
-def _parse_bool(v: Any) -> bool:
-    if isinstance(v, bool):
-        return v
-    return str(v).lower() in ('true', '1', 't')
