@@ -1,15 +1,17 @@
-# Multi-Tenant Genie Architecture
+# Multi-Tenant Genie
 
-A reference architecture and implementation for delivering Databricks Genie-powered analytics to thousands of external clients, each with isolated per-client data access.
+A reference solution for delivering Databricks Genie to thousands of isolated tenants — one Service Principal per tenant, UC row filters for hard data isolation, no Databricks accounts for end users.
+
+> **Status:** Refactoring to a generalized reference solution (branch `generalize-and-scale`). The full README + quickstart land in Phase 4 of the migration. See `docs/superpowers/specs/2026-04-28-generalize-and-scale-design.md` for the plan.
 
 ## Problem Statement
 
-Deliver a natural-language analytics experience (via Databricks Genie Conversation API) to thousands of external clients where:
+Deliver a natural-language analytics experience (via Databricks Genie Conversation API) to thousands of external tenants where:
 
-- Each client queries their **own data only** (strict row-level isolation)
-- Clients authenticate via API keys — **no Databricks accounts required**
-- The platform operator manages onboarding/offboarding without per-client Databricks provisioning
-- Audit trails trace every query back to the originating client
+- Each tenant queries their **own data only** (strict row-level isolation)
+- Tenants authenticate via API keys — **no Databricks accounts required**
+- The platform operator manages onboarding/offboarding without per-tenant Databricks provisioning
+- Audit trails trace every query back to the originating tenant
 
 ## Architecture Patterns
 
