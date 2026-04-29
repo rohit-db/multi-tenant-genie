@@ -171,7 +171,7 @@ ALTER TABLE ${ws.data.catalog}.${ws.data.schema_name}.bookings
           <ScriptStep
             n={1}
             label="Frame the problem"
-            text=’"Deliver Genie to thousands of tenants without giving any of them a Databricks account, and prove that tenant A can never see tenant B\’s data. The same pattern works for embedded analytics in a SaaS product, partner-facing reporting, and customer-portal dashboards."’
+            text={`"Deliver Genie to thousands of tenants without giving any of them a Databricks account, and prove that tenant A can never see tenant B's data. The same pattern works for embedded analytics in a SaaS product, partner-facing reporting, and customer-portal dashboards."`}
           />
           <ScriptStep
             n={2}
