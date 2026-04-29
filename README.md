@@ -28,12 +28,9 @@ Two viable patterns are documented. **Pattern B is recommended** for scale.
 
 | Document | Description |
 |----------|-------------|
-| [BCD Travel Context](docs/bcd-context.md) | Meeting notes, stakeholders, current state, open questions |
 | [Architecture Overview](docs/architecture.md) | Full system design, component interactions, data flow |
-| [POC Request Flow](docs/poc-flow.md) | One-page demo cheat sheet — diagram + 8-step walkthrough of a single Genie ask |
 | [Code Snippets](docs/code-snippets.md) | Lift-and-use examples: token mint, SP onboarding, row filters, Genie ask, audit |
 | [Pattern A: SP-per-Client](docs/pattern-a-sp-per-client.md) | SP-per-client with `session_user()` RLS |
-| [Pattern B: Custom Claims](docs/pattern-b-custom-claims.md) | Shared SP with custom identity claims (recommended) |
 | [Security & RBAC](docs/security-rbac.md) | Authentication, encryption, multi-tenant isolation, audit |
 | [Implementation Guide](docs/implementation-guide.md) | Step-by-step setup: proxy app, Lakebase, UC, Genie |
 | [Rate Limits & Scaling](docs/scaling.md) | Genie throughput, token caching, multi-workspace strategies |
