@@ -41,6 +41,7 @@ import {
   Lightbulb,
 } from "lucide-react";
 import { api, type AskResponse, type Tenant } from "@/lib/api";
+import { Inspector } from "@/components/Inspector";
 
 const DEFAULT_Q =
   "How many bookings do I have and what is my total spend?";
@@ -66,7 +67,7 @@ export function DemoPage() {
   const [sweep, setSweep] = useState<AskResponse[] | null>(null);
 
   const ask = useMutation({
-    mutationFn: () => api.ask(pick!, q),
+    mutationFn: () => api.ask(pick!, q, { inspect: true }),
     onSuccess: (r) => setAnswer(r),
   });
   const sweepM = useMutation({
@@ -270,7 +271,16 @@ export function DemoPage() {
 
       {ask.isPending && !answer && <AnswerSkeleton />}
 
-      {answer && <AnswerCard a={answer} />}
+      {answer && (
+        <>
+          <AnswerCard a={answer} />
+          {answer.inspector && (
+            <div className="mt-4">
+              <Inspector payload={answer.inspector} />
+            </div>
+          )}
+        </>
+      )}
 
       {sweepM.isError && (
         <Alert variant="destructive">
@@ -309,9 +319,6 @@ export function DemoPage() {
 }
 
 function AnswerCard({ a }: { a: AskResponse }) {
-  const firstRow = a.rows[0];
-  const primaryMetric =
-    firstRow && firstRow.length > 0 ? String(firstRow[0]) : null;
   return (
     <Card className="shadow-sm overflow-hidden">
       <div className="h-1 bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500" />
