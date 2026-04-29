@@ -1,5 +1,9 @@
 const BASE = "/api";
 
+// ============================================================================
+// Types
+// ============================================================================
+
 export interface Tenant {
   tenant_id: string;
   tenant_name: string;
@@ -19,6 +23,22 @@ export interface WorkspaceInfo {
   admin_group: string;
 }
 
+export interface InspectorStep {
+  n: number;
+  name: string;
+  summary: string | null;
+  code_snippet: string | null;
+  payload_in: Record<string, unknown> | null;
+  payload_out: Record<string, unknown> | null;
+  duration_ms: number;
+  error: string | null;
+}
+
+export interface InspectorPayload {
+  request_id: string;
+  steps: InspectorStep[];
+}
+
 export interface AskResponse {
   tenant_id: string;
   tenant_name: string;
@@ -32,17 +52,81 @@ export interface AskResponse {
   conversation_id: string | null;
   message_id: string | null;
   status: string;
+  inspector: InspectorPayload | null;
 }
 
 export interface AuditRow {
-  event_time: string | null;
-  actor: string | null;
+  id: number;
   tenant_id: string | null;
-  action: string | null;
+  actor: string | null;
+  action: string;
   sp_app_id: string | null;
-  status: string | null;
+  question: string | null;
+  status: string;
+  latency_ms: number | null;
   detail: string | null;
+  created_at: string;
 }
+
+export interface MappingRow {
+  sp_app_id: string;
+  tenant_id: string;
+  active: boolean;
+}
+
+export interface OnboardResponse {
+  tenant: Tenant;
+  client_id: string;
+  client_secret: string;
+}
+
+export interface RotateResponse {
+  tenant_id: string;
+  new_client_secret: string;
+}
+
+export interface BulkOnboardInput {
+  tenant_id: string;
+  tenant_name: string;
+}
+
+export interface BulkOnboardResponse {
+  job_id: string;
+}
+
+export interface BulkOnboardJobError {
+  tenant_id: string;
+  error: string;
+}
+
+export interface BulkOnboardJobResult {
+  tenant_id: string;
+  tenant_name: string;
+  sp_app_id: string;
+  client_secret: string;
+}
+
+export interface JobStatus {
+  job_id: string;
+  state: "running" | "completed" | string;
+  total: number;
+  processed: number;
+  errors: BulkOnboardJobError[];
+  results: BulkOnboardJobResult[];
+}
+
+export interface VerifyResultRow {
+  tenant_id: string;
+  tenant_name: string;
+  passed: boolean;
+  distinct_tenant_ids: string[];
+  visible_row_count: number | null;
+  error: string | null;
+}
+
+// ============================================================================
+// HTTP helper
+// ============================================================================
 
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
@@ -56,16 +140,28 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+// ============================================================================
+// API surface
+// ============================================================================
+
 export const api = {
+  // Workspace info
   workspace: () => http<WorkspaceInfo>("/workspace/info"),
+
+  // Tenants — list + lifecycle
   tenants: () => http<Tenant[]>("/tenants"),
   onboard: (tenant_id: string, tenant_name: string) =>
-    http<{ tenant: Tenant; client_id: string; client_secret: string }>(
-      "/tenants/onboard",
-      { method: "POST", body: JSON.stringify({ tenant_id, tenant_name }) },
-    ),
+    http<OnboardResponse>("/tenants/onboard", {
+      method: "POST",
+      body: JSON.stringify({ tenant_id, tenant_name }),
+    }),
+  bulkOnboard: (tenants: BulkOnboardInput[]) =>
+    http<BulkOnboardResponse>("/tenants/bulk", {
+      method: "POST",
+      body: JSON.stringify({ tenants }),
+    }),
   rotate: (tenant_id: string) =>
-    http<{ tenant_id: string; new_client_secret: string }>(
+    http<RotateResponse>(
       `/tenants/${encodeURIComponent(tenant_id)}/rotate`,
       { method: "POST" },
     ),
@@ -74,16 +170,47 @@ export const api = {
       `/tenants/${encodeURIComponent(tenant_id)}/deactivate`,
       { method: "POST" },
     ),
-  audit: (limit = 50) => http<AuditRow[]>(`/tenants/audit?limit=${limit}`),
-  mapping: () =>
-    http<{ sp_app_id: string; tenant_id: string; active: boolean }[]>(
-      "/tenants/mapping",
+  reactivate: (tenant_id: string) =>
+    http<RotateResponse>(
+      `/tenants/${encodeURIComponent(tenant_id)}/reactivate`,
+      { method: "POST" },
     ),
-  ask: (tenant_id: string, question: string, conversation_id?: string | null) =>
-    http<AskResponse>("/genie/ask", {
+  delete: (tenant_id: string) =>
+    http<{ ok: boolean }>(
+      `/tenants/${encodeURIComponent(tenant_id)}`,
+      { method: "DELETE" },
+    ),
+  history: (tenant_id: string, limit = 50) =>
+    http<AuditRow[]>(
+      `/tenants/${encodeURIComponent(tenant_id)}/history?limit=${limit}`,
+    ),
+
+  // Jobs
+  job: (job_id: string) => http<JobStatus>(`/jobs/${encodeURIComponent(job_id)}`),
+
+  // Audit + mapping (moved out of /tenants in Phase 2)
+  audit: (limit = 50) => http<AuditRow[]>(`/audit?limit=${limit}`),
+  mapping: () => http<MappingRow[]>("/audit/mapping"),
+
+  // Verify
+  verify: () => http<VerifyResultRow[]>("/verify", { method: "POST" }),
+
+  // Genie
+  ask: (
+    tenant_id: string,
+    question: string,
+    options?: { conversation_id?: string | null; inspect?: boolean },
+  ) => {
+    const url = options?.inspect ? "/genie/ask?inspect=true" : "/genie/ask";
+    return http<AskResponse>(url, {
       method: "POST",
-      body: JSON.stringify({ tenant_id, question, conversation_id }),
-    }),
+      body: JSON.stringify({
+        tenant_id,
+        question,
+        conversation_id: options?.conversation_id ?? null,
+      }),
+    });
+  },
   sweep: (question: string) =>
     http<AskResponse[]>("/genie/sweep", {
       method: "POST",
