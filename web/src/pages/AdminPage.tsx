@@ -37,8 +37,16 @@ import {
   CheckCircle2,
   Clock,
   History,
+  Upload,
+  Shield,
+  Power,
+  PowerOff,
 } from "lucide-react";
 import { api, type Tenant, type AuditRow } from "@/lib/api";
+import { NumbersStrip } from "@/components/NumbersStrip";
+import { BulkOnboardDialog } from "@/components/BulkOnboardDialog";
+import { VerifyIsolationModal } from "@/components/VerifyIsolationModal";
+import { TenantHistoryDrawer } from "@/components/TenantHistoryDrawer";
 
 function statusBadge(status: string) {
   if (status === "active")
@@ -87,9 +95,14 @@ export function AdminPage() {
     client_id: string;
     client_secret: string;
   } | null>(null);
-  const [lastRotate, setLastRotate] = useState<{
+  const [lastSecret, setLastSecret] = useState<{
     tenant_id: string;
     new_client_secret: string;
+    label: string;
+  } | null>(null);
+  const [historyTarget, setHistoryTarget] = useState<{
+    id: string;
+    name: string;
   } | null>(null);
 
   const onboard = useMutation({
@@ -106,7 +119,7 @@ export function AdminPage() {
   const rotate = useMutation({
     mutationFn: (tid: string) => api.rotate(tid),
     onSuccess: (d) => {
-      setLastRotate(d);
+      setLastSecret({ ...d, label: "rotated" });
       qc.invalidateQueries({ queryKey: ["tenants"] });
       qc.invalidateQueries({ queryKey: ["audit"] });
     },
@@ -118,33 +131,27 @@ export function AdminPage() {
       qc.invalidateQueries({ queryKey: ["audit"] });
     },
   });
+  const reactivate = useMutation({
+    mutationFn: (tid: string) => api.reactivate(tid),
+    onSuccess: (d) => {
+      setLastSecret({ ...d, label: "reactivated" });
+      qc.invalidateQueries({ queryKey: ["tenants"] });
+      qc.invalidateQueries({ queryKey: ["audit"] });
+    },
+  });
+  const remove = useMutation({
+    mutationFn: (tid: string) => api.delete(tid),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tenants"] });
+      qc.invalidateQueries({ queryKey: ["audit"] });
+    },
+  });
 
   const data = tenants.data ?? [];
-  const active = data.filter((t) => t.status === "active").length;
-  const deact = data.filter((t) => t.status === "deactivated").length;
 
   return (
     <div className="space-y-6">
-      {/* Stat header */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <StatCard
-          label="Client organizations"
-          value={data.length}
-          icon={UserPlus}
-        />
-        <StatCard
-          label="Active"
-          value={active}
-          icon={CheckCircle2}
-          tint="text-emerald-600"
-        />
-        <StatCard
-          label="Deactivated"
-          value={deact}
-          icon={Trash2}
-          tint="text-rose-600"
-        />
-      </div>
+      <NumbersStrip />
 
       {lastOnboard && (
         <Alert className="border-emerald-200 bg-emerald-50">
@@ -156,23 +163,22 @@ export function AdminPage() {
             client_secret={lastOnboard.client_secret}
             <br />
             <span className="text-emerald-700/60">
-              Stored in .demo-secrets.env. The Client tab can now query Genie as
-              this tenant.
+              Stored encrypted in Lakebase. The Demo tab can now query Genie as this tenant.
             </span>
           </AlertDescription>
         </Alert>
       )}
-      {lastRotate && (
+      {lastSecret && (
         <Alert className="border-indigo-200 bg-indigo-50">
           <KeyRound className="h-4 w-4 text-indigo-600" />
           <AlertTitle className="text-indigo-900">
-            Secret rotated for {lastRotate.tenant_id}
+            Secret {lastSecret.label} for {lastSecret.tenant_id}
           </AlertTitle>
           <AlertDescription className="font-mono text-xs break-all text-indigo-800">
-            new_client_secret={lastRotate.new_client_secret}
+            new_client_secret={lastSecret.new_client_secret}
             <br />
             <span className="text-indigo-700/60">
-              New secret active; old secrets revoked after new one was stored.
+              New secret active; old secrets revoked.
             </span>
           </AlertDescription>
         </Alert>
@@ -180,88 +186,105 @@ export function AdminPage() {
 
       {/* Tenants table */}
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader className="flex flex-row items-center justify-between gap-4 flex-wrap">
           <div>
-            <CardTitle>Client organization Service Principals</CardTitle>
+            <CardTitle>Tenant Service Principals</CardTitle>
             <CardDescription>
-              One Databricks SP per tenant organization. Each
-              SP's identity flows into{" "}
+              One Databricks SP per tenant organization. Each SP's identity flows
+              into{" "}
               <code className="text-[11px] bg-slate-100 px-1 rounded">
                 session_user()
               </code>{" "}
               for UC row-filter enforcement.
             </CardDescription>
           </div>
-          <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <UserPlus className="h-4 w-4 mr-2" />
-                Onboard tenant
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Onboard a new client organization</DialogTitle>
-                <DialogDescription>
-                  Creates a workspace Service Principal, mints an OAuth secret,
-                  stores it in the{" "}
-                  <code className="text-[11px] bg-slate-100 px-1 rounded">
-                    mt-genie-demo
-                  </code>{" "}
-                  secret scope, grants SELECT/USE on the demo catalog, grants
-                  CAN_RUN on the Genie Space, and inserts the mapping row.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-2">
-                <div>
-                  <label className="text-sm font-medium">
-                    tenant_id (slug)
-                  </label>
-                  <Input
-                    value={newId}
-                    onChange={(e) => setNewId(e.target.value)}
-                    placeholder="hersheys"
-                    className="mt-1"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium">Display name</label>
-                  <Input
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    placeholder="Hershey's"
-                    className="mt-1"
-                  />
-                </div>
-                {onboard.isError && (
-                  <Alert variant="destructive">
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertDescription>
-                      {(onboard.error as Error).message}
-                    </AlertDescription>
-                  </Alert>
-                )}
-              </div>
-              <DialogFooter>
-                <Button
-                  onClick={() => onboard.mutate()}
-                  disabled={!newId.trim() || !newName.trim() || onboard.isPending}
-                >
-                  {onboard.isPending ? (
-                    <>
-                      <Clock className="h-4 w-4 mr-2 animate-spin" />
-                      Onboarding…
-                    </>
-                  ) : (
-                    <>
-                      <UserPlus className="h-4 w-4 mr-2" />
-                      Onboard
-                    </>
-                  )}
+          <div className="flex items-center gap-2">
+            <Dialog open={open} onOpenChange={setOpen}>
+              <DialogTrigger asChild>
+                <Button>
+                  <UserPlus className="h-4 w-4 mr-2" />
+                  Onboard one
                 </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Onboard a new tenant</DialogTitle>
+                  <DialogDescription>
+                    Creates a workspace Service Principal, mints an OAuth secret,
+                    stores it encrypted in Lakebase, grants SELECT/USE on the demo
+                    catalog, grants CAN_RUN on the Genie Space, and inserts the
+                    UC mapping row.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-2">
+                  <div>
+                    <label className="text-sm font-medium">tenant_id (slug)</label>
+                    <Input
+                      value={newId}
+                      onChange={(e) => setNewId(e.target.value)}
+                      placeholder="acme"
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium">Display name</label>
+                    <Input
+                      value={newName}
+                      onChange={(e) => setNewName(e.target.value)}
+                      placeholder="Acme Industrial"
+                      className="mt-1"
+                    />
+                  </div>
+                  {onboard.isError && (
+                    <Alert variant="destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription>
+                        {(onboard.error as Error).message}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </div>
+                <DialogFooter>
+                  <Button
+                    onClick={() => onboard.mutate()}
+                    disabled={
+                      !newId.trim() || !newName.trim() || onboard.isPending
+                    }
+                  >
+                    {onboard.isPending ? (
+                      <>
+                        <Clock className="h-4 w-4 mr-2 animate-spin" />
+                        Onboarding…
+                      </>
+                    ) : (
+                      <>
+                        <UserPlus className="h-4 w-4 mr-2" />
+                        Onboard
+                      </>
+                    )}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <BulkOnboardDialog
+              trigger={
+                <Button variant="outline">
+                  <Upload className="h-4 w-4 mr-2" />
+                  Bulk onboard…
+                </Button>
+              }
+            />
+
+            <VerifyIsolationModal
+              trigger={
+                <Button variant="outline">
+                  <Shield className="h-4 w-4 mr-2" />
+                  Verify isolation
+                </Button>
+              }
+            />
+          </div>
         </CardHeader>
         <CardContent>
           {tenants.isLoading ? (
@@ -284,7 +307,6 @@ export function AdminPage() {
                   <TableHead>Tenant</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Service Principal</TableHead>
-                  <TableHead>Secret</TableHead>
                   <TableHead>Updated</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -298,15 +320,36 @@ export function AdminPage() {
                     onDeactivate={() => {
                       if (
                         window.confirm(
-                          `Deactivate ${t.tenant_name}? The SP will be disabled and the mapping row flipped off.`,
+                          `Deactivate ${t.tenant_name}? The SP will be disabled and credentials dropped. The tenant_id can be reactivated later.`,
                         )
                       ) {
                         deactivate.mutate(t.tenant_id);
                       }
                     }}
-                    rotating={rotate.isPending && rotate.variables === t.tenant_id}
+                    onReactivate={() => reactivate.mutate(t.tenant_id)}
+                    onDelete={() => {
+                      if (
+                        window.confirm(
+                          `Hard delete ${t.tenant_name}? The SP, mapping row, credential, and registry row are all removed. This cannot be undone.`,
+                        )
+                      ) {
+                        remove.mutate(t.tenant_id);
+                      }
+                    }}
+                    onHistory={() =>
+                      setHistoryTarget({ id: t.tenant_id, name: t.tenant_name })
+                    }
+                    rotating={
+                      rotate.isPending && rotate.variables === t.tenant_id
+                    }
                     deactivating={
                       deactivate.isPending && deactivate.variables === t.tenant_id
+                    }
+                    reactivating={
+                      reactivate.isPending && reactivate.variables === t.tenant_id
+                    }
+                    deleting={
+                      remove.isPending && remove.variables === t.tenant_id
                     }
                   />
                 ))}
@@ -324,8 +367,8 @@ export function AdminPage() {
             Recent activity
           </CardTitle>
           <CardDescription>
-            All admin operations write to <code>audit_log</code> with actor,
-            tenant, action, and detail.
+            All admin operations and tenant queries write to{" "}
+            <code>audit_log</code> in Lakebase.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -342,27 +385,31 @@ export function AdminPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {audit.data.map((r: AuditRow, i: number) => (
-                  <TableRow key={i}>
+                {audit.data.map((r: AuditRow) => (
+                  <TableRow key={r.id}>
                     <TableCell className="whitespace-nowrap text-muted-foreground text-xs">
-                      {formatTs(r.event_time)}
+                      {formatTs(r.created_at)}
                     </TableCell>
-                    <TableCell className="text-xs">{r.actor}</TableCell>
+                    <TableCell className="text-xs">{r.actor ?? "—"}</TableCell>
                     <TableCell className="text-xs font-medium">
-                      {r.tenant_id}
+                      {r.tenant_id ?? "—"}
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline">{r.action}</Badge>
                     </TableCell>
                     <TableCell>
                       <Badge
-                        variant={r.status === "ok" ? "default" : "destructive"}
+                        variant={
+                          r.status === "ok" || r.status === "completed"
+                            ? "default"
+                            : "destructive"
+                        }
                       >
                         {r.status}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground truncate max-w-[280px]">
-                      {r.detail || "—"}
+                      {r.question ?? r.detail ?? "—"}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -373,6 +420,14 @@ export function AdminPage() {
           )}
         </CardContent>
       </Card>
+
+      <TenantHistoryDrawer
+        tenantId={historyTarget?.id ?? null}
+        tenantName={historyTarget?.name ?? null}
+        onOpenChange={(open) => {
+          if (!open) setHistoryTarget(null);
+        }}
+      />
     </div>
   );
 }
@@ -381,15 +436,26 @@ function TenantRow({
   t,
   onRotate,
   onDeactivate,
+  onReactivate,
+  onDelete,
+  onHistory,
   rotating,
   deactivating,
+  reactivating,
+  deleting,
 }: {
   t: Tenant;
   onRotate: () => void;
   onDeactivate: () => void;
+  onReactivate: () => void;
+  onDelete: () => void;
+  onHistory: () => void;
   rotating: boolean;
   deactivating: boolean;
+  reactivating: boolean;
+  deleting: boolean;
 }) {
+  const isActive = t.status === "active";
   return (
     <TableRow>
       <TableCell>
@@ -412,81 +478,77 @@ function TenantRow({
           </span>
         </div>
       </TableCell>
-      <TableCell>
-        {t.status === "active" ? (
-          <Badge
-            variant="outline"
-            className="border-emerald-200 text-emerald-700 bg-emerald-50"
-          >
-            stored
-          </Badge>
-        ) : (
-          <Badge
-            variant="outline"
-            className="border-slate-200 text-slate-500 bg-slate-50"
-          >
-            n/a
-          </Badge>
-        )}
-      </TableCell>
       <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
         {formatTs(t.updated_at)}
       </TableCell>
       <TableCell className="text-right">
         <div className="flex gap-1 justify-end">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={onRotate}
-            disabled={rotating || t.status === "deactivated"}
-          >
-            {rotating ? (
-              <RotateCw className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <RotateCw className="h-3.5 w-3.5" />
-            )}
-            <span className="ml-1.5 hidden sm:inline">Rotate</span>
+          <Button size="sm" variant="outline" onClick={onHistory}>
+            <History className="h-3.5 w-3.5" />
+            <span className="ml-1.5 hidden sm:inline">History</span>
           </Button>
+          {isActive && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onRotate}
+              disabled={rotating}
+            >
+              {rotating ? (
+                <RotateCw className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RotateCw className="h-3.5 w-3.5" />
+              )}
+              <span className="ml-1.5 hidden sm:inline">Rotate</span>
+            </Button>
+          )}
+          {isActive ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-amber-200 text-amber-700 hover:bg-amber-50 hover:text-amber-700"
+              onClick={onDeactivate}
+              disabled={deactivating}
+            >
+              {deactivating ? (
+                <Clock className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <PowerOff className="h-3.5 w-3.5" />
+              )}
+              <span className="ml-1.5 hidden sm:inline">Deactivate</span>
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-700"
+              onClick={onReactivate}
+              disabled={reactivating}
+            >
+              {reactivating ? (
+                <Clock className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Power className="h-3.5 w-3.5" />
+              )}
+              <span className="ml-1.5 hidden sm:inline">Reactivate</span>
+            </Button>
+          )}
           <Button
             size="sm"
             variant="outline"
             className="border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-700"
-            onClick={onDeactivate}
-            disabled={deactivating || t.status === "deactivated"}
+            onClick={onDelete}
+            disabled={deleting}
           >
-            {deactivating ? (
+            {deleting ? (
               <Clock className="h-3.5 w-3.5 animate-spin" />
             ) : (
               <Trash2 className="h-3.5 w-3.5" />
             )}
-            <span className="ml-1.5 hidden sm:inline">Deactivate</span>
+            <span className="ml-1.5 hidden sm:inline">Delete</span>
           </Button>
         </div>
       </TableCell>
     </TableRow>
-  );
-}
-
-function StatCard({
-  label,
-  value,
-  icon: Icon,
-  tint,
-}: {
-  label: string;
-  value: number;
-  icon: React.ComponentType<{ className?: string }>;
-  tint?: string;
-}) {
-  return (
-    <Card>
-      <CardContent className="pt-6 flex items-center justify-between">
-        <div>
-          <p className="text-sm text-muted-foreground">{label}</p>
-          <p className="text-3xl font-bold mt-1">{value}</p>
-        </div>
-        <Icon className={`h-8 w-8 ${tint ?? "text-muted-foreground/40"}`} />
-      </CardContent>
-    </Card>
   );
 }
