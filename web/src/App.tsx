@@ -4,7 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
 import { AdminPage } from "@/pages/AdminPage";
-import { ClientPage } from "@/pages/ClientPage";
+import { DemoPage } from "@/pages/DemoPage";
 import { ArchitecturePage } from "@/pages/ArchitecturePage";
 
 function App() {
@@ -27,7 +27,7 @@ function App() {
                   variant="secondary"
                   className="text-[10px] font-medium bg-indigo-50 text-indigo-700 border-indigo-100"
                 >
-                  POC
+                  Reference
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground mt-1 truncate">
@@ -60,15 +60,15 @@ function App() {
       </header>
 
       <main className="container mx-auto px-6 py-8">
-        <Tabs defaultValue="client" className="w-full">
+        <Tabs defaultValue="demo" className="w-full">
           <TabsList className="bg-white shadow-sm border">
-            <TabsTrigger value="client">Client View</TabsTrigger>
+            <TabsTrigger value="demo">Demo</TabsTrigger>
             <TabsTrigger value="admin">Admin</TabsTrigger>
             <TabsTrigger value="architecture">Architecture</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="client">
-            <ClientPage />
+          <TabsContent value="demo">
+            <DemoPage />
           </TabsContent>
           <TabsContent value="admin">
             <AdminPage />
@@ -81,7 +81,7 @@ function App() {
 
       <footer className="container mx-auto px-6 py-6 text-[11px] text-muted-foreground flex items-center justify-between">
         <div>
-          Pattern A — SP per client org · UC row filters · Databricks OAuth M2M
+          Pattern A — SP per tenant · UC row filters · Databricks OAuth M2M
         </div>
         <div className="font-mono opacity-70">
           {ws?.host.replace("https://", "")}
