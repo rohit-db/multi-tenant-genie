@@ -8,7 +8,6 @@ export interface Tenant {
   status: "active" | "rotating" | "deactivated" | string;
   created_at: string;
   updated_at: string;
-  has_local_secret: boolean;
 }
 
 export interface WorkspaceInfo {

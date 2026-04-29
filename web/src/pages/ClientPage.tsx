@@ -57,9 +57,7 @@ export function ClientPage() {
   const tenants = useQuery({ queryKey: ["tenants"], queryFn: api.tenants });
   const active = useMemo(
     () =>
-      (tenants.data ?? []).filter(
-        (t) => t.status === "active" && t.has_local_secret,
-      ),
+      (tenants.data ?? []).filter((t) => t.status === "active"),
     [tenants.data],
   );
   const [pick, setPick] = useState<string | undefined>(undefined);
@@ -138,10 +136,9 @@ export function ClientPage() {
           ) : active.length === 0 ? (
             <Alert>
               <AlertCircle className="h-4 w-4" />
-              <AlertTitle>No active tenants with stored secrets</AlertTitle>
+              <AlertTitle>No active tenants</AlertTitle>
               <AlertDescription>
-                Onboard a tenant on the Admin tab first (or rotate one to
-                regenerate a local secret).
+                Onboard a tenant on the Admin tab first.
               </AlertDescription>
             </Alert>
           ) : (
