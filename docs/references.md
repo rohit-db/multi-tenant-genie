@@ -32,13 +32,6 @@
 | [Embedded Analytics Deep Dive](https://docs.google.com/presentation/d/19oKE5mxRfXNNxAqWGMqvufEeOCd4KqfEzHASb8ym2X4) | Technical deep dive on embedding Genie | SP permissions setup for Genie API calls |
 | [Databricks Partner Well-Architected Framework](https://databrickslabs.github.io/partner-architecture/) | Official partner architecture guidance | Design patterns for built-on partners; Firefly is the reference impl |
 
-### BCD Travel Specific
-
-| Document | Description |
-|----------|-------------|
-| [BCD Travel - Identity & SSO for Advito](https://databricks.lightning.force.com/lightning/r/ApprovalRequest__c/aEJVp000001P1ErOAK/view) | ASQ for multi-tenant isolation architecture |
-| [ASQ Draft — Identity & SSO](https://drive.google.com/file/d/1seAg-eJXsS5kQLFcZzIFEfVQiWyiupjV) | Recommended architecture for per-customer data scoping |
-
 ## Public Documentation
 
 | Document | URL |
