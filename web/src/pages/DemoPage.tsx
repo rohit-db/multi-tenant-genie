@@ -53,7 +53,7 @@ const SAMPLE_QUESTIONS = [
   "Which cabin class do my travelers use most?",
 ];
 
-export function ClientPage() {
+export function DemoPage() {
   const tenants = useQuery({ queryKey: ["tenants"], queryFn: api.tenants });
   const active = useMemo(
     () =>
