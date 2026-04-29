@@ -61,7 +61,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 # Allow ``python -m src.scripts.bulk_onboard`` and direct invocation.
-_REPO = Path(__file__).resolve().parents[2]
+_REPO = Path(__file__).resolve().parents[1]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
