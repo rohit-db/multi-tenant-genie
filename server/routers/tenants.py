@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-
-_REPO = Path(__file__).resolve().parents[2]
 
 from server.lib.config import CONFIG
 from server.lib.sp_manager import SPManager
@@ -23,32 +20,6 @@ def _mgr() -> SPManager:
     if _mgr_singleton is None:
         _mgr_singleton = SPManager()
     return _mgr_singleton
-
-
-def _secrets_path() -> Path:
-    return _REPO / '.demo-secrets.env'
-
-
-def _load_secrets() -> dict[str, str]:
-    p = _secrets_path()
-    if not p.exists():
-        return {}
-    out: dict[str, str] = {}
-    for line in p.read_text().splitlines():
-        if '=' in line:
-            k, v = line.split('=', 1)
-            out[k.strip()] = v.strip()
-    return out
-
-
-def _save_secrets(secrets: dict[str, str]) -> None:
-    _secrets_path().write_text(
-        '\n'.join(f'{k}={v}' for k, v in secrets.items()) + '\n'
-    )
-
-
-def _secret_key(tenant_id: str) -> str:
-    return f'MT_GENIE_SECRET_{tenant_id.upper()}'
 
 
 def _invalidate_minter_cache(sp_app_id: str) -> None:
@@ -76,7 +47,6 @@ class Tenant(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
-    has_local_secret: bool = False
 
 
 class OnboardRequest(BaseModel):
@@ -108,22 +78,18 @@ class AuditRow(BaseModel):
 @router.get('', response_model=list[Tenant])
 async def list_tenants() -> list[Tenant]:
     try:
-        secrets = _load_secrets()
-        out: list[Tenant] = []
-        for t in _mgr().list_tenants():
-            out.append(
-                Tenant(
-                    tenant_id=t.tenant_id,
-                    tenant_name=t.tenant_name,
-                    sp_app_id=t.sp_app_id,
-                    sp_display_name=t.sp_display_name,
-                    status=t.status,
-                    created_at=t.created_at,
-                    updated_at=t.updated_at,
-                    has_local_secret=_secret_key(t.tenant_id) in secrets,
-                )
+        return [
+            Tenant(
+                tenant_id=t.tenant_id,
+                tenant_name=t.tenant_name,
+                sp_app_id=t.sp_app_id,
+                sp_display_name=t.sp_display_name,
+                status=t.status,
+                created_at=t.created_at,
+                updated_at=t.updated_at,
             )
-        return out
+            for t in _mgr().list_tenants()
+        ]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -138,9 +104,6 @@ async def onboard(req: OnboardRequest) -> OnboardResponse:
         result = _mgr().onboard_tenant(tenant_id, tenant_name)
         _mgr().grant_data_access([tenant_id])
         _mgr().grant_genie_access([tenant_id])
-        secrets = _load_secrets()
-        secrets[_secret_key(tenant_id)] = result.client_secret
-        _save_secrets(secrets)
         return OnboardResponse(
             tenant=Tenant(
                 tenant_id=result.tenant.tenant_id,
@@ -150,7 +113,6 @@ async def onboard(req: OnboardRequest) -> OnboardResponse:
                 status=result.tenant.status,
                 created_at=result.tenant.created_at,
                 updated_at=result.tenant.updated_at,
-                has_local_secret=True,
             ),
             client_id=result.client_id,
             client_secret=result.client_secret,
@@ -163,9 +125,6 @@ async def onboard(req: OnboardRequest) -> OnboardResponse:
 async def rotate(tenant_id: str) -> RotateResponse:
     try:
         new_secret = _mgr().rotate_secret(tenant_id)
-        secrets = _load_secrets()
-        secrets[_secret_key(tenant_id)] = new_secret
-        _save_secrets(secrets)
         for t in _mgr().list_tenants():
             if t.tenant_id == tenant_id:
                 _invalidate_minter_cache(t.sp_app_id)
@@ -184,9 +143,6 @@ async def deactivate(tenant_id: str) -> dict[str, Any]:
                 sp_app_id = t.sp_app_id
                 break
         _mgr().deactivate_tenant(tenant_id)
-        secrets = _load_secrets()
-        secrets.pop(_secret_key(tenant_id), None)
-        _save_secrets(secrets)
         _invalidate_minter_cache(sp_app_id)
         return {'ok': True, 'tenant_id': tenant_id}
     except Exception as e:

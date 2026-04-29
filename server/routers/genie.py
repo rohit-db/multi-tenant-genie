@@ -15,7 +15,7 @@ from server.lib.genie_client import GenieClient
 from server.lib.sp_manager import SPManager
 from server.lib.token_minter import TokenMinter
 
-from .tenants import _load_secrets, _mgr, _secret_key
+from .tenants import _mgr
 
 router = APIRouter()
 
@@ -49,20 +49,20 @@ class SweepRequest(BaseModel):
     question: str
 
 
-def _get_secret(tenant_id: str) -> str | None:
-    return _load_secrets().get(_secret_key(tenant_id))
+def _get_secret_for_sp(sp_app_id: str) -> str | None:
+    from server.lib.repository import credential as cred_repo
+    return cred_repo.get(sp_app_id)
 
 
 def _ask_sync(tenant_id: str, question: str, conversation_id: str | None = None) -> AskResponse:
-    secret = _get_secret(tenant_id)
     tenants = [t for t in _mgr().list_tenants() if t.tenant_id == tenant_id]
     if not tenants:
         raise ValueError(f'Tenant {tenant_id} not found')
     tenant = tenants[0]
+    secret = _get_secret_for_sp(tenant.sp_app_id)
     if not secret:
         raise ValueError(
-            f'No local secret for tenant {tenant_id}. Rotate on the Admin '
-            'tab to regenerate.'
+            f"No credential stored for tenant {tenant_id}. Rotate on the Admin tab to regenerate."
         )
     resp = _client.ask(
         space_id=CONFIG.genie_space_id,
