@@ -1,0 +1,10 @@
+{
+  "row_filter_column": "tenant_id",
+  "questions": [
+    "How many bookings do I have and what is my total spend?",
+    "Show my top 5 routes by total spend",
+    "What's my average booking amount, by cabin class?",
+    "Which suppliers appear most in my bookings?",
+    "Which cabin class do my travelers use most?"
+  ]
+}
