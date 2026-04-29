@@ -13,9 +13,14 @@ from pydantic import BaseModel
 from server.lib.config import CONFIG
 from server.lib.genie_client import GenieClient
 from server.lib.sp_manager import SPManager
+from server.lib.inspector import Inspector
 from server.lib.token_minter import TokenMinter
 
-from .tenants import _mgr
+from server.routers import tenants as _tenants_mod
+
+
+def _mgr():
+    return _tenants_mod._mgr()
 
 router = APIRouter()
 
@@ -43,6 +48,7 @@ class AskResponse(BaseModel):
     conversation_id: str | None
     message_id: str | None
     status: str
+    inspector: dict | None = None
 
 
 class SweepRequest(BaseModel):
@@ -54,37 +60,125 @@ def _get_secret_for_sp(sp_app_id: str) -> str | None:
     return cred_repo.get(sp_app_id)
 
 
-def _ask_sync(tenant_id: str, question: str, conversation_id: str | None = None) -> AskResponse:
-    tenants = [t for t in _mgr().list_tenants() if t.tenant_id == tenant_id]
-    if not tenants:
-        raise ValueError(f'Tenant {tenant_id} not found')
-    tenant = tenants[0]
-    secret = _get_secret_for_sp(tenant.sp_app_id)
-    if not secret:
-        raise ValueError(
-            f"No credential stored for tenant {tenant_id}. Rotate on the Admin tab to regenerate."
+def _ask_sync(
+    tenant_id: str,
+    question: str,
+    conversation_id: str | None = None,
+    *,
+    inspect: bool = False,
+) -> AskResponse:
+    insp = Inspector() if inspect else None
+
+    # Step 1: Authenticate (resolve which tenant the request belongs to)
+    if insp is not None:
+        with insp.step("Authenticate") as step:
+            tenants = [t for t in _mgr().list_tenants() if t.tenant_id == tenant_id]
+            if not tenants:
+                raise ValueError(f'Tenant {tenant_id} not found')
+            tenant = tenants[0]
+            step.summary = f"Tenant resolved → {tenant.tenant_id} (sp_app_id={tenant.sp_app_id[:12]}…)"
+            step.code_snippet = "tenants = mgr.list_tenants()  # reads client_registry"
+    else:
+        tenants = [t for t in _mgr().list_tenants() if t.tenant_id == tenant_id]
+        if not tenants:
+            raise ValueError(f'Tenant {tenant_id} not found')
+        tenant = tenants[0]
+
+    # Step 2: Resolve tenant (Lakebase lookup → genie_space_id)
+    if insp is not None:
+        with insp.step("Resolve tenant") as step:
+            space_id = CONFIG.genie_space_id  # per-tenant override is Phase-2-future
+            step.summary = f"genie_space_id={space_id[:12]}… (workspace global)"
+            step.code_snippet = "tenant_repo.get(tenant_id)  # → client_registry row"
+    else:
+        space_id = CONFIG.genie_space_id
+
+    # Step 3: Mint token
+    if insp is not None:
+        with insp.step("Mint token") as step:
+            secret = _get_secret_for_sp(tenant.sp_app_id)
+            if not secret:
+                raise ValueError(
+                    f"No credential stored for tenant {tenant_id}. "
+                    "Rotate on the Admin tab to regenerate."
+                )
+            step.summary = "OAuth M2M token (cache-aware)"
+            step.code_snippet = (
+                "minter.get_token(client_id, client_secret)  # /oidc/v1/token"
+            )
+    else:
+        secret = _get_secret_for_sp(tenant.sp_app_id)
+        if not secret:
+            raise ValueError(
+                f"No credential stored for tenant {tenant_id}. "
+                "Rotate on the Admin tab to regenerate."
+            )
+
+    # Step 4: Apply row filter (static — runs in-warehouse, not in proxy)
+    if insp is not None:
+        insp.add_static_step(
+            "Apply row filter",
+            summary=(
+                f"Filter resolves for sp_app_id={tenant.sp_app_id[:12]}… "
+                f"→ tenant_id='{tenant.tenant_id}'"
+            ),
+            code_snippet=(
+                "CREATE OR REPLACE FUNCTION tenant_row_filter(tenant_id STRING)\n"
+                "RETURN EXISTS (\n"
+                "  SELECT 1 FROM sp_tenant_mapping\n"
+                "  WHERE sp_app_id = session_user() AND active\n"
+                "    AND m.tenant_id = tenant_row_filter.tenant_id\n"
+                ");"
+            ),
         )
-    resp = _client.ask(
-        space_id=CONFIG.genie_space_id,
-        question=question,
-        client_id=tenant.sp_app_id,
-        client_secret=secret,
-        conversation_id=conversation_id,
-        timeout_s=120,
-    )
-    # Best-effort audit log; never fail the request if logging fails.
-    try:
-        _mgr()._audit(
-            'query',
-            tenant.tenant_id,
-            tenant.sp_app_id,
-            question=resp.question,
-            latency_ms=resp.latency_ms,
-            status='ok' if resp.status == 'COMPLETED' else 'error',
-            detail=None if resp.status == 'COMPLETED' else f'genie_status={resp.status}',
+
+    # Step 5: Ask Genie
+    if insp is not None:
+        with insp.step("Ask Genie") as step:
+            resp = _client.ask(
+                space_id=space_id, question=question,
+                client_id=tenant.sp_app_id, client_secret=secret,
+                conversation_id=conversation_id, timeout_s=120,
+            )
+            step.summary = (
+                f"Genie status={resp.status}; rows={len(resp.rows)}; "
+                f"cols={len(resp.columns)}"
+            )
+            step.code_snippet = (
+                "POST /api/2.0/genie/spaces/{space_id}/start-conversation"
+            )
+    else:
+        resp = _client.ask(
+            space_id=space_id, question=question,
+            client_id=tenant.sp_app_id, client_secret=secret,
+            conversation_id=conversation_id, timeout_s=120,
         )
-    except Exception:
-        pass
+
+    # Step 6: Audit (best-effort)
+    if insp is not None:
+        with insp.step("Audit") as step:
+            try:
+                _mgr()._audit(
+                    'query', tenant.tenant_id, tenant.sp_app_id,
+                    question=resp.question, latency_ms=resp.latency_ms,
+                    status='ok' if resp.status == 'COMPLETED' else 'error',
+                    detail=None if resp.status == 'COMPLETED' else f'genie_status={resp.status}',
+                )
+                step.summary = "audit_log row written"
+                step.code_snippet = "audit_repo.append(action='query', ...)"
+            except Exception as e:
+                step.summary = f"audit failed (non-fatal): {e}"
+    else:
+        try:
+            _mgr()._audit(
+                'query', tenant.tenant_id, tenant.sp_app_id,
+                question=resp.question, latency_ms=resp.latency_ms,
+                status='ok' if resp.status == 'COMPLETED' else 'error',
+                detail=None if resp.status == 'COMPLETED' else f'genie_status={resp.status}',
+            )
+        except Exception:
+            pass
+
     return AskResponse(
         tenant_id=tenant.tenant_id,
         tenant_name=tenant.tenant_name,
@@ -98,6 +192,7 @@ def _ask_sync(tenant_id: str, question: str, conversation_id: str | None = None)
         conversation_id=resp.conversation_id,
         message_id=resp.message_id,
         status=resp.status,
+        inspector=insp.build() if insp is not None else None,
     )
 
 
@@ -133,14 +228,19 @@ def _ask_safe(tenant_id: str, question: str) -> AskResponse:
 
 
 @router.post('/ask', response_model=AskResponse)
-async def ask(req: AskRequest) -> AskResponse:
+async def ask(req: AskRequest, inspect: bool = False) -> AskResponse:
     try:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
-            _pool, _ask_sync, req.tenant_id, req.question, req.conversation_id
+            _pool, _ask_sync_with_inspect, req.tenant_id, req.question, req.conversation_id, inspect,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _ask_sync_with_inspect(tenant_id: str, question: str, conversation_id: str | None, inspect: bool) -> AskResponse:
+    """Wrapper because run_in_executor doesn't take kwargs."""
+    return _ask_sync(tenant_id, question, conversation_id, inspect=inspect)
 
 
 @router.post('/sweep', response_model=list[AskResponse])
