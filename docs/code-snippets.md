@@ -281,7 +281,7 @@ ALTER TABLE main.analytics.bookings
 
 The `tenant_row_filter.tenant_id` reference inside `EXISTS` disambiguates the function parameter from the column being filtered.
 
-Source: [`src/sql/setup.sql`](../src/sql/setup.sql)
+Source: [`sql/setup.sql`](../sql/setup.sql)
 
 ### 3.2 Row filter — Pattern B (shared SP, custom claims)
 
@@ -301,7 +301,7 @@ ALTER TABLE main.analytics.bookings
 
 `current_oauth_custom_identity_claims()` returns a STRUCT — index into it (`:tenant` here) for the specific claim you set during token exchange.
 
-Source: [`src/sql/row_filters.sql`](../src/sql/row_filters.sql)
+Source: This file has been removed. Pattern B is not shipping; Pattern A (above) is the active row-filter implementation.
 
 ### 3.3 Grant data access to a tenant SP (Pattern A only)
 
@@ -337,7 +337,7 @@ COMMENT 'Lookup table joined in the tenant row filter';
 
 Keep this minimal — every row-filter evaluation joins it. Multi-tenant fan-out (one SP serving multiple tenants) is supported by inserting multiple rows.
 
-Source: [`src/sql/setup.sql`](../src/sql/setup.sql)
+Source: [`sql/setup.sql`](../sql/setup.sql)
 
 ---
 
@@ -483,7 +483,7 @@ CREATE TABLE main.analytics.audit_log (
 ) USING DELTA;
 ```
 
-Source: [`src/sql/setup.sql`](../src/sql/setup.sql)
+Source: [`sql/setup.sql`](../sql/setup.sql)
 
 ### 5.2 Insert an audit row from the proxy
 
