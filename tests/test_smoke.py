@@ -7,12 +7,12 @@ import importlib
 
 
 def test_app_imports():
-    mod = importlib.import_module("api.app")
+    mod = importlib.import_module("server.app")
     assert mod.app is not None
 
 
 def test_routers_import():
-    importlib.import_module("api.routers")
+    importlib.import_module("server.routers")
 
 
 def test_lib_imports():

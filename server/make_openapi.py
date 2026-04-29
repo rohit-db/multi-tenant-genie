@@ -12,7 +12,7 @@ def main(output: str) -> None:
   """Generate OpenAPI spec to file."""
   try:
     # Import the FastAPI app
-    from api.app import app
+    from server.app import app
 
     # Generate OpenAPI spec
     openapi_spec = app.openapi()
