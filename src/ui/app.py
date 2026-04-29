@@ -25,10 +25,10 @@ _REPO = Path(__file__).resolve().parents[2]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
-from src.lib.config import CONFIG  # noqa: E402
-from src.lib.genie_client import GenieClient  # noqa: E402
-from src.lib.sp_manager import SPManager, Tenant  # noqa: E402
-from src.lib.token_minter import TokenMinter  # noqa: E402
+from server.lib.config import CONFIG  # noqa: E402
+from server.lib.genie_client import GenieClient  # noqa: E402
+from server.lib.sp_manager import SPManager, Tenant  # noqa: E402
+from server.lib.token_minter import TokenMinter  # noqa: E402
 
 
 # ------------------------------------------------------------------ helpers

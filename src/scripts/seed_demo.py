@@ -28,8 +28,8 @@ _REPO = Path(__file__).resolve().parents[2]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
-from src.lib.config import CONFIG  # noqa: E402
-from src.lib.sp_manager import SPManager  # noqa: E402
+from server.lib.config import CONFIG  # noqa: E402
+from server.lib.sp_manager import SPManager  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("seed")

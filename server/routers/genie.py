@@ -3,25 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-_REPO = Path(__file__).resolve().parents[2]
-if str(_REPO) not in sys.path:
-    sys.path.insert(0, str(_REPO))
+from server.lib.config import CONFIG
+from server.lib.genie_client import GenieClient
+from server.lib.sp_manager import SPManager
+from server.lib.token_minter import TokenMinter
 
-from src.lib.config import CONFIG  # noqa: E402
-from src.lib.genie_client import GenieClient  # noqa: E402
-from src.lib.sp_manager import SPManager  # noqa: E402
-from src.lib.token_minter import TokenMinter  # noqa: E402
-
-from .tenants import _load_secrets, _mgr, _secret_key  # noqa: E402
+from .tenants import _load_secrets, _mgr, _secret_key
 
 router = APIRouter()
 

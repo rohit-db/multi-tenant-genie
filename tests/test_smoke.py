@@ -16,7 +16,7 @@ def test_routers_import():
 
 
 def test_lib_imports():
-    importlib.import_module("src.lib.config")
-    importlib.import_module("src.lib.sp_manager")
-    importlib.import_module("src.lib.genie_client")
-    importlib.import_module("src.lib.token_minter")
+    importlib.import_module("server.lib.config")
+    importlib.import_module("server.lib.sp_manager")
+    importlib.import_module("server.lib.genie_client")
+    importlib.import_module("server.lib.token_minter")

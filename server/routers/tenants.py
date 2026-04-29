@@ -1,8 +1,7 @@
-"""Tenant SP lifecycle endpoints (wraps src/lib/sp_manager)."""
+"""Tenant SP lifecycle endpoints (wraps server/lib/sp_manager)."""
 
 from __future__ import annotations
 
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -11,11 +10,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 _REPO = Path(__file__).resolve().parents[2]
-if str(_REPO) not in sys.path:
-    sys.path.insert(0, str(_REPO))
 
-from src.lib.config import CONFIG  # noqa: E402
-from src.lib.sp_manager import SPManager  # noqa: E402
+from server.lib.config import CONFIG
+from server.lib.sp_manager import SPManager
 
 router = APIRouter()
 _mgr_singleton: SPManager | None = None

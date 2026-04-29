@@ -2,17 +2,10 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-_REPO = Path(__file__).resolve().parents[2]
-if str(_REPO) not in sys.path:
-    sys.path.insert(0, str(_REPO))
-
-from src.lib.config import CONFIG  # noqa: E402
+from server.lib.config import CONFIG
 
 router = APIRouter()
 
