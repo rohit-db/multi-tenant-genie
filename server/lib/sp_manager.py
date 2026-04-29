@@ -98,114 +98,106 @@ class SPManager:
 
     # ---------------------------------------------------------------- public API
     def list_tenants(self, include_deactivated: bool = True) -> list[Tenant]:
-        where = "" if include_deactivated else "WHERE status <> 'deactivated'"
-        rows = self._execute_sql(
-            f"""
-            SELECT tenant_id, tenant_name, sp_app_id, sp_display_name, status,
-                   created_at, updated_at
-            FROM {CONFIG.fq_tenants}
-            {where}
-            ORDER BY created_at DESC
-            """
-        )
+        from server.lib.repository import tenant as tenant_repo
+        rows = tenant_repo.list_all()
+        if not include_deactivated:
+            rows = [r for r in rows if r.status != "deactivated"]
         return [
             Tenant(
-                tenant_id=r[0],
-                tenant_name=r[1],
-                sp_app_id=r[2],
-                sp_display_name=r[3],
-                status=r[4],
-                created_at=_parse_ts(r[5]),
-                updated_at=_parse_ts(r[6]),
+                tenant_id=r.tenant_id,
+                tenant_name=r.display_name,
+                sp_app_id=r.sp_app_id,
+                sp_display_name=r.sp_display_name,
+                status=r.status,
+                created_at=r.created_at,
+                updated_at=r.updated_at,
             )
             for r in rows
         ]
 
     def onboard_tenant(self, tenant_id: str, tenant_name: str) -> OnboardResult:
-        """Create an SP, mint its first OAuth secret, and register the mapping."""
-        display = f"{CONFIG.sp_display_prefix}-{tenant_id}"
-
-        logger.info("Creating SP %s", display)
-        sp: ServicePrincipal = self.w.service_principals.create(
-            display_name=display,
-            active=True,
+        """Create SP, mint secret, register in Lakebase + UC mapping. Roll back on any failure."""
+        from server.lib.repository import (
+            tenant as tenant_repo,
+            credential as cred_repo,
+            mapping as mapping_repo,
         )
+
+        display = f"{CONFIG.sp_display_prefix}-{tenant_id}"
+        logger.info("Creating SP %s", display)
+        sp = self.w.service_principals.create(display_name=display, active=True)
         sp_app_id = sp.application_id
         sp_db_id = sp.id
 
-        logger.info("Minting OAuth secret for SP %s (db_id=%s)", sp_app_id, sp_db_id)
-        secret = self.w.service_principal_secrets_proxy.create(
-            service_principal_id=sp_db_id
-        )
-        # SDK returns ``secret`` (the one-time value); ``id`` identifies it later.
-        client_secret = secret.secret
-        secret_id = secret.id
+        try:
+            secret = self.w.service_principal_secrets_proxy.create(
+                service_principal_id=sp_db_id
+            )
+            client_secret = secret.secret
 
-        # Persist secret in Databricks secret scope
-        self._ensure_secret_scope()
-        self.w.secrets.put_secret(
-            scope=CONFIG.secret_scope,
-            key=sp_app_id,
-            string_value=client_secret,
-        )
+            # 1. UC mapping (row-filter join target)
+            mapping_repo.insert_mapping(self.w, self.warehouse_id, sp_app_id, tenant_id)
 
-        # Grant workspace + warehouse + catalog access (entitlements handled by admin group later)
-        now = datetime.now(timezone.utc).isoformat()
-        self._execute_sql(
-            f"""
-            INSERT INTO {CONFIG.fq_tenants}
-              (tenant_id, tenant_name, sp_app_id, sp_display_name, status, created_at, updated_at)
-            VALUES ('{tenant_id}', '{tenant_name}', '{sp_app_id}', '{display}',
-                    'active', TIMESTAMP'{now}', TIMESTAMP'{now}')
-            """
-        )
-        self._execute_sql(
-            f"""
-            INSERT INTO {CONFIG.fq_mapping} (sp_app_id, tenant_id, active)
-            VALUES ('{sp_app_id}', '{tenant_id}', true)
-            """
-        )
-        self._audit("onboard", tenant_id, sp_app_id, detail=f"secret_id={secret_id}")
-
-        return OnboardResult(
-            tenant=Tenant(
+            # 2. Lakebase: tenant + credential
+            tenant_repo.insert(
                 tenant_id=tenant_id,
-                tenant_name=tenant_name,
+                display_name=tenant_name,
                 sp_app_id=sp_app_id,
                 sp_display_name=display,
-                status="active",
-                created_at=datetime.fromisoformat(now),
-                updated_at=datetime.fromisoformat(now),
+            )
+            cred_repo.put(sp_app_id, client_secret)
+        except Exception:
+            # Roll back: delete UC mapping (if it was inserted), delete Lakebase rows, delete SP
+            try:
+                mapping_repo.delete_mapping(self.w, self.warehouse_id, sp_app_id)
+            except Exception:
+                pass
+            try:
+                tenant_repo.delete(tenant_id)
+            except Exception:
+                pass
+            try:
+                cred_repo.delete(sp_app_id)
+            except Exception:
+                pass
+            try:
+                self.w.service_principals.delete(id=sp_db_id)
+            except Exception:
+                pass
+            raise
+
+        self._audit("onboard", tenant_id, sp_app_id, detail=f"sp_db_id={sp_db_id}")
+
+        now = datetime.now(timezone.utc)
+        return OnboardResult(
+            tenant=Tenant(
+                tenant_id=tenant_id, tenant_name=tenant_name,
+                sp_app_id=sp_app_id, sp_display_name=display,
+                status="active", created_at=now, updated_at=now,
             ),
             client_id=sp_app_id,
             client_secret=client_secret,
         )
 
     def rotate_secret(self, tenant_id: str) -> str:
-        """Create a fresh OAuth secret, persist it, and remove the old one.
+        """Create a fresh OAuth secret, persist it in Lakebase, and remove the old one.
 
         Returns the new client_secret. Uses the Databricks 5-secrets-per-SP
         allowance to demonstrate zero-downtime overlap: the new secret is
         usable immediately; old secret is deleted only after the new one is
         saved, so any in-flight token exchange keeps working.
         """
+        from server.lib.repository import credential as cred_repo
         tenant = self._fetch_tenant(tenant_id)
         sp_db_id = self._sp_db_id(tenant.sp_app_id)
 
         existing = list(self.w.service_principal_secrets_proxy.list(
             service_principal_id=sp_db_id
         ))
+        fresh = self.w.service_principal_secrets_proxy.create(service_principal_id=sp_db_id)
 
-        fresh = self.w.service_principal_secrets_proxy.create(
-            service_principal_id=sp_db_id
-        )
-        # Persist new secret first
-        self.w.secrets.put_secret(
-            scope=CONFIG.secret_scope,
-            key=tenant.sp_app_id,
-            string_value=fresh.secret,
-        )
-        # Delete any prior secrets AFTER the new one is stored
+        cred_repo.put(tenant.sp_app_id, fresh.secret)
+
         for s in existing:
             try:
                 self.w.service_principal_secrets_proxy.delete(
@@ -215,19 +207,16 @@ class SPManager:
             except Exception as e:
                 logger.warning("Could not delete old secret %s: %s", s.id, e)
 
-        now = datetime.now(timezone.utc).isoformat()
-        self._execute_sql(
-            f"""
-            UPDATE {CONFIG.fq_tenants}
-            SET status = 'active', updated_at = TIMESTAMP'{now}'
-            WHERE tenant_id = '{tenant_id}'
-            """
-        )
+        from server.lib.repository import tenant as tenant_repo
+        tenant_repo.set_status(tenant_id, "active")
         self._audit("rotate", tenant_id, tenant.sp_app_id)
         return fresh.secret
 
     def deactivate_tenant(self, tenant_id: str) -> None:
         """Disable the SP, flip mapping off, mark tenant deactivated."""
+        from server.lib.repository import (
+            tenant as tenant_repo, credential as cred_repo, mapping as mapping_repo
+        )
         tenant = self._fetch_tenant(tenant_id)
         sp_db_id = self._sp_db_id(tenant.sp_app_id)
 
@@ -239,31 +228,14 @@ class SPManager:
             display_name=tenant.sp_display_name,
         )
         # Remove all OAuth secrets so stale tokens can't keep calling
-        for s in self.w.service_principal_secrets_proxy.list(
-            service_principal_id=sp_db_id
-        ):
+        for s in self.w.service_principal_secrets_proxy.list(service_principal_id=sp_db_id):
             self.w.service_principal_secrets_proxy.delete(
                 service_principal_id=sp_db_id, secret_id=s.id
             )
-        try:
-            self.w.secrets.delete_secret(
-                scope=CONFIG.secret_scope, key=tenant.sp_app_id
-            )
-        except Exception:
-            pass
 
-        now = datetime.now(timezone.utc).isoformat()
-        self._execute_sql(
-            f"UPDATE {CONFIG.fq_mapping} SET active = false "
-            f"WHERE sp_app_id = '{tenant.sp_app_id}'"
-        )
-        self._execute_sql(
-            f"""
-            UPDATE {CONFIG.fq_tenants}
-            SET status = 'deactivated', updated_at = TIMESTAMP'{now}'
-            WHERE tenant_id = '{tenant_id}'
-            """
-        )
+        cred_repo.delete(tenant.sp_app_id)
+        mapping_repo.deactivate_mapping(self.w, self.warehouse_id, tenant.sp_app_id)
+        tenant_repo.set_status(tenant_id, "deactivated")
         self._audit("deactivate", tenant_id, tenant.sp_app_id)
 
     def grant_genie_access(
@@ -331,10 +303,19 @@ class SPManager:
         raise LookupError(f"SP {app_id} not found")
 
     def _fetch_tenant(self, tenant_id: str) -> Tenant:
-        for t in self.list_tenants():
-            if t.tenant_id == tenant_id:
-                return t
-        raise LookupError(f"Tenant {tenant_id} not found")
+        from server.lib.repository import tenant as tenant_repo
+        r = tenant_repo.get(tenant_id)
+        if not r:
+            raise LookupError(f"Tenant {tenant_id} not found")
+        return Tenant(
+            tenant_id=r.tenant_id,
+            tenant_name=r.display_name,
+            sp_app_id=r.sp_app_id,
+            sp_display_name=r.sp_display_name,
+            status=r.status,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
+        )
 
     def _audit(
         self,
@@ -347,25 +328,15 @@ class SPManager:
         status: str = "ok",
         question: str | None = None,
     ) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        from server.lib.repository import audit as audit_repo
         actor = "unknown"
         try:
             actor = self.w.current_user.me().user_name or "unknown"
         except Exception:
             pass
-
-        def _q(v: str | None) -> str:
-            return "NULL" if v is None else f"'{v.replace(chr(39), chr(39)*2)}'"
-
-        latency_sql = "NULL" if latency_ms is None else str(int(latency_ms))
-        self._execute_sql(
-            f"""
-            INSERT INTO {CONFIG.fq_audit}
-              (event_time, actor, tenant_id, action, sp_app_id, question,
-               latency_ms, status, detail)
-            VALUES (TIMESTAMP'{now}', '{actor}', '{tenant_id}', '{action}',
-                    '{sp_app_id}', {_q(question)}, {latency_sql}, '{status}', {_q(detail)})
-            """
+        audit_repo.append(
+            action=action, status=status, tenant_id=tenant_id, actor=actor,
+            sp_app_id=sp_app_id, question=question, latency_ms=latency_ms, detail=detail,
         )
 
 
