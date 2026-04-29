@@ -37,7 +37,6 @@ import {
   Columns,
   Clock,
   Plane,
-  Info,
   Lightbulb,
 } from "lucide-react";
 import { api, type AskResponse, type Tenant } from "@/lib/api";
@@ -86,32 +85,6 @@ export function DemoPage() {
 
   return (
     <div className="space-y-6">
-      {/* Use-case framing */}
-      <Card className="border-indigo-100 bg-gradient-to-br from-indigo-50/50 to-white">
-        <CardContent className="py-5">
-          <div className="flex items-start gap-3">
-            <div className="h-9 w-9 rounded-lg bg-indigo-100 flex items-center justify-center shrink-0">
-              <Info className="h-4 w-4 text-indigo-600" />
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm font-medium leading-tight">
-                Embedded analytics — multi-tenant isolation pattern
-              </p>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                Each tenant queries through its own Service Principal; UC row
-                filters keep query results scoped to that tenant's data.
-                The proxy mints per-tenant OAuth tokens and audits every
-                request. Every tenant sees only{" "}
-                <span className="font-mono">client_credentials</span>{" "}
-                per-tenant and lets Unity Catalog row filters — not Genie
-                prompts — do the enforcement. Pick a tenant below and watch
-                the same question return tenant-scoped data.
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
       <Card className="border-indigo-100 shadow-sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">

@@ -19,12 +19,8 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Layers,
-  Key,
-  ShieldCheck,
   Database,
-  Sparkles,
   GitBranch,
-  PlayCircle,
   UserPlus,
   MessageCircle,
   RotateCw,
@@ -190,74 +186,6 @@ ALTER TABLE ${ws.data.catalog}.${ws.data.schema_name}.bookings
 
   return (
     <div className="space-y-6">
-      {/* Demo script callout */}
-      <Card className="bg-gradient-to-br from-slate-900 to-slate-800 text-slate-100 border-0 shadow-lg">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-white">
-            <PlayCircle className="h-5 w-5 text-indigo-300" />
-            90-second demo script
-          </CardTitle>
-          <CardDescription className="text-slate-300">
-            Narration outline for a screen recording. Each step is ~10–15s.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3 text-sm leading-relaxed">
-          <ScriptStep
-            n={1}
-            label="Frame the problem"
-            text={`"Deliver Genie to thousands of tenants without giving any of them a Databricks account, and prove that tenant A can never see tenant B's data. The same pattern works for embedded analytics in a SaaS product, partner-facing reporting, and customer-portal dashboards."`}
-          />
-          <ScriptStep
-            n={2}
-            label="Show isolation (Demo tab)"
-            text='"I’m querying as Nike." Ask → result. "Same question as CloudVenture." Different answer. Then hit "Isolation sweep" — all tenants run in parallel, Genie generates one SQL, each tenant gets different rows.'
-          />
-          <ScriptStep
-            n={3}
-            label="Show lifecycle (Admin tab)"
-            text='Open the Admin tab. Point at the stat cards + tenants table. Click "Onboard tenant" — creates a real SP, mints secret, grants UC + Genie, inserts mapping row. Audit log updates live.'
-          />
-          <ScriptStep
-            n={4}
-            label="Show enforcement (Architecture tab)"
-            text="Scroll down. Here is the actual mapping table Unity Catalog joins against — and the row filter SQL deployed right now. This is the only thing between a tenant and someone else’s data."
-          />
-          <ScriptStep
-            n={5}
-            label="Close"
-            text='"Pattern works today with GA primitives. One SP per tenant. Zero prompt-based enforcement. Scales to ~3,000 SPs with documented headroom. Next iteration adds Lakebase for app-layer state + a managed Terraform module."'
-          />
-        </CardContent>
-      </Card>
-
-      {/* Flow cards summary */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <FlowCard
-          icon={Key}
-          step={1}
-          title="Onboarding"
-          body="Creates a workspace Service Principal, mints its first OAuth client_credentials secret, stores it in the mt-genie-demo secret scope, inserts a row in sp_tenant_mapping, and grants USE/SELECT on the demo catalog plus CAN_RUN on the Genie Space."
-        />
-        <FlowCard
-          icon={Sparkles}
-          step={2}
-          title="Tenant call"
-          body="The app exchanges the tenant's SP client_id/secret at /oidc/v1/token. The JWT's session_user() resolves to the SP's application_id inside Unity Catalog — no end-user identity needed."
-        />
-        <FlowCard
-          icon={ShieldCheck}
-          step={3}
-          title="Row filter"
-          body="UC runs tenant_row_filter(tenant_id) for every row Genie touches. The function joins sp_tenant_mapping on session_user() and keeps only rows the SP is allowed to see. Deterministic, not prompt-dependent."
-        />
-        <FlowCard
-          icon={GitBranch}
-          step={4}
-          title="Rotation & offboarding"
-          body="Rotation creates a new secret before deleting old ones (overlap window for in-flight tokens). Deactivation flips active=false in the mapping, disables the SP, and revokes all its OAuth secrets."
-        />
-      </div>
-
       {/* Architecture diagram */}
       <Card className="shadow-sm">
         <CardHeader>
@@ -474,61 +402,6 @@ ALTER TABLE ${ws.data.catalog}.${ws.data.schema_name}.bookings
           </p>
         </CardContent>
       </Card>
-    </div>
-  );
-}
-
-function FlowCard({
-  icon: Icon,
-  step,
-  title,
-  body,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  step: number;
-  title: string;
-  body: string;
-}) {
-  return (
-    <Card className="shadow-sm hover:shadow-md transition-shadow">
-      <CardHeader>
-        <div className="flex items-center gap-3">
-          <div className="h-9 w-9 rounded-full bg-gradient-to-br from-indigo-100 to-violet-100 text-indigo-700 font-mono text-sm flex items-center justify-center border border-indigo-200">
-            {step}
-          </div>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Icon className="h-4 w-4" />
-            {title}
-          </CardTitle>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <p className="text-sm text-muted-foreground leading-relaxed">{body}</p>
-      </CardContent>
-    </Card>
-  );
-}
-
-function ScriptStep({
-  n,
-  label,
-  text,
-}: {
-  n: number;
-  label: string;
-  text: string;
-}) {
-  return (
-    <div className="flex gap-3">
-      <div className="h-6 w-6 shrink-0 rounded-full bg-indigo-500/20 text-indigo-300 text-[11px] font-semibold flex items-center justify-center border border-indigo-400/30">
-        {n}
-      </div>
-      <div className="flex-1">
-        <div className="text-[11px] uppercase tracking-wider text-indigo-300/80 font-semibold mb-1">
-          {label}
-        </div>
-        <p className="text-slate-100">{text}</p>
-      </div>
     </div>
   );
 }
