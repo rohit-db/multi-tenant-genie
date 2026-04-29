@@ -31,7 +31,19 @@ load_env_file('.env.local')
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-  """Manage application lifespan."""
+  """Apply Lakebase migrations on startup."""
+  from pathlib import Path
+  from server.lib import db
+
+  mig_dir = Path(__file__).resolve().parent.parent / "sql" / "lakebase"
+  if mig_dir.exists() and any(mig_dir.glob("V*.sql")):
+    try:
+      db.apply_migrations(mig_dir)
+    except Exception as e:
+      # Surface the failure but don't crash silently
+      import logging
+      logging.exception("Lakebase migrations failed: %s", e)
+      raise
   yield
 
 
