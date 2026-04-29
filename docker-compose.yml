@@ -1,0 +1,25 @@
+# docker-compose.yml
+# Local Postgres that stands in for Lakebase during dev.
+# Bring up: docker compose up -d
+# Connection string: postgresql://postgres:postgres@localhost:5432/mtg
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: mt-genie-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: mtg
+    ports:
+      - "5432:5432"
+    volumes:
+      - mt-genie-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mtg"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+volumes:
+  mt-genie-postgres-data:

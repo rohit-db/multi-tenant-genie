@@ -40,3 +40,6 @@ bulk-onboard-report*.json
 
 # Brainstorm visual companion
 .superpowers/
+
+# Local docker volumes
+.docker/
