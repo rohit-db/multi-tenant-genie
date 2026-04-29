@@ -121,6 +121,26 @@ async def onboard(req: OnboardRequest) -> OnboardResponse:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class BulkOnboardRequest(BaseModel):
+    tenants: list[OnboardRequest]
+
+
+class BulkOnboardResponse(BaseModel):
+    job_id: str
+
+
+@router.post('/bulk', response_model=BulkOnboardResponse)
+async def bulk_onboard(req: BulkOnboardRequest) -> BulkOnboardResponse:
+    if not req.tenants:
+        raise HTTPException(status_code=400, detail="tenants list is empty")
+    from server.routers.jobs import runner
+    job_id = runner().submit([
+        {"tenant_id": t.tenant_id, "tenant_name": t.tenant_name}
+        for t in req.tenants
+    ])
+    return BulkOnboardResponse(job_id=job_id)
+
+
 @router.post('/{tenant_id}/rotate', response_model=RotateResponse)
 async def rotate(tenant_id: str) -> RotateResponse:
     try:
