@@ -59,7 +59,7 @@ const ONBOARD_FLOW = `sequenceDiagram
 
 const CALL_FLOW = `sequenceDiagram
     autonumber
-    participant UI as Client UI
+    participant UI as Tenant UI
     participant API as FastAPI
     participant Cache as Token Cache
     participant OIDC as /oidc/v1/token
@@ -111,6 +111,40 @@ const ROTATE_FLOW = `sequenceDiagram
     API->>UC: UPDATE tenants SET updated_at
     API->>UC: INSERT audit_log (action='rotate')
     API-->>Admin: { tenant_id, new_client_secret }
+`;
+
+const ARCH_DIAGRAM = `graph LR
+  subgraph Client[Tenant App]
+    UI[Tenant UI / API caller]
+  end
+
+  subgraph Proxy[Multi-Tenant Genie Proxy]
+    API[FastAPI router]
+    Inspector[Request inspector]
+    LB[(Lakebase<br/>client_registry,<br/>sp_credentials,<br/>audit_log)]
+    Mint[OAuth M2M minter]
+  end
+
+  subgraph DBX[Databricks Workspace]
+    SP[Per-tenant Service Principals]
+    UC[(UC Delta:<br/>bookings, customers,<br/>sp_tenant_mapping)]
+    RowFilter[Row filter:<br/>session_user → tenant_id]
+    Genie[Genie Space]
+  end
+
+  UI -->|POST /api/genie/ask| API
+  API -->|lookup| LB
+  API -->|mint token| Mint
+  Mint -->|OAuth client_credentials| SP
+  SP -->|Genie API| Genie
+  Genie -->|SQL on bookings| UC
+  UC -->|filtered rows| RowFilter
+  RowFilter -->|enforces session_user → tenant_id| UC
+  Genie -->|results| API
+  API -->|audit| LB
+  API -->|inspector payload| Inspector
+  Inspector -->|JSON| UI
+  API -->|response| UI
 `;
 
 const DEACTIVATE_FLOW = `sequenceDiagram
@@ -175,7 +209,7 @@ ALTER TABLE ${ws.data.catalog}.${ws.data.schema_name}.bookings
           />
           <ScriptStep
             n={2}
-            label="Show isolation (Client tab)"
+            label="Show isolation (Demo tab)"
             text='"I’m querying as Nike." Ask → result. "Same question as CloudVenture." Different answer. Then hit "Isolation sweep" — all tenants run in parallel, Genie generates one SQL, each tenant gets different rows.'
           />
           <ScriptStep
@@ -186,12 +220,12 @@ ALTER TABLE ${ws.data.catalog}.${ws.data.schema_name}.bookings
           <ScriptStep
             n={4}
             label="Show enforcement (Architecture tab)"
-            text='Scroll down. "Here is the actual mapping table Unity Catalog joins against — and the row filter SQL deployed right now. This is the only thing between a client and someone else’s data."'
+            text="Scroll down. Here is the actual mapping table Unity Catalog joins against — and the row filter SQL deployed right now. This is the only thing between a tenant and someone else’s data."
           />
           <ScriptStep
             n={5}
             label="Close"
-            text='"Pattern works today with GA primitives. One SP per client. Zero prompt-based enforcement. Scales to ~3,000 SPs with documented headroom. Next iteration adds Lakebase for app-layer state + a managed Terraform module."'
+            text='"Pattern works today with GA primitives. One SP per tenant. Zero prompt-based enforcement. Scales to ~3,000 SPs with documented headroom. Next iteration adds Lakebase for app-layer state + a managed Terraform module."'
           />
         </CardContent>
       </Card>
@@ -207,7 +241,7 @@ ALTER TABLE ${ws.data.catalog}.${ws.data.schema_name}.bookings
         <FlowCard
           icon={Sparkles}
           step={2}
-          title="Client call"
+          title="Tenant call"
           body="The app exchanges the tenant's SP client_id/secret at /oidc/v1/token. The JWT's session_user() resolves to the SP's application_id inside Unity Catalog — no end-user identity needed."
         />
         <FlowCard
@@ -223,6 +257,25 @@ ALTER TABLE ${ws.data.catalog}.${ws.data.schema_name}.bookings
           body="Rotation creates a new secret before deleting old ones (overlap window for in-flight tokens). Deactivation flips active=false in the mapping, disables the SP, and revokes all its OAuth secrets."
         />
       </div>
+
+      {/* Architecture diagram */}
+      <Card className="shadow-sm">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <GitBranch className="h-5 w-5" />
+            System architecture
+          </CardTitle>
+          <CardDescription>
+            End-to-end component map: Lakebase as operational store, per-tenant
+            Service Principals, and UC row-filter enforcement.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-md border bg-white p-4 overflow-auto">
+            <Mermaid chart={ARCH_DIAGRAM} />
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Sequence diagrams */}
       <Card className="shadow-sm">
@@ -245,7 +298,7 @@ ALTER TABLE ${ws.data.catalog}.${ws.data.schema_name}.bookings
               </TabsTrigger>
               <TabsTrigger value="call" className="gap-1.5">
                 <MessageCircle className="h-3.5 w-3.5" />
-                Client → Genie
+                Tenant → Genie
               </TabsTrigger>
               <TabsTrigger value="rotate" className="gap-1.5">
                 <RotateCw className="h-3.5 w-3.5" />
@@ -259,10 +312,10 @@ ALTER TABLE ${ws.data.catalog}.${ws.data.schema_name}.bookings
 
             <TabsContent value="onboard" className="mt-0">
               <DiagramCaption
-                title="Admin onboards a client organization"
+                title="Admin onboards a tenant"
                 points={[
                   "One-click end-to-end: creates SP, mints secret, stores it, inserts mapping, grants UC + Genie.",
-                  "Client secret is surfaced exactly once. Lost → rotate.",
+                  "Tenant SP secret is surfaced exactly once. Lost → rotate.",
                   "Everything except secret creation is idempotent — re-onboard is safe.",
                 ]}
               />
@@ -273,7 +326,7 @@ ALTER TABLE ${ws.data.catalog}.${ws.data.schema_name}.bookings
 
             <TabsContent value="call" className="mt-0">
               <DiagramCaption
-                title="Client UI asks Genie as the tenant's SP"
+                title="Tenant UI asks Genie as the tenant's SP"
                 points={[
                   "Token cached per-SP in-process (5 min buffer before expiry). Miss ≈ one /oidc call.",
                   "session_user() inside Unity Catalog resolves to the SP's application_id from the JWT.",
@@ -301,7 +354,7 @@ ALTER TABLE ${ws.data.catalog}.${ws.data.schema_name}.bookings
 
             <TabsContent value="deactivate" className="mt-0">
               <DiagramCaption
-                title="Offboarding a client organization"
+                title="Offboarding a tenant"
                 points={[
                   "SP.update(active=false) immediately blocks new token exchanges.",
                   "All secrets are deleted so even cached secrets can't mint new tokens.",
@@ -383,6 +436,42 @@ ALTER TABLE ${ws.data.catalog}.${ws.data.schema_name}.bookings
           <pre className="rounded-md bg-slate-900 text-slate-100 p-4 text-xs overflow-auto font-mono leading-relaxed shadow-inner">
             {rowFilterSql}
           </pre>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Intentionally out of scope</CardTitle>
+          <CardDescription>
+            What this reference does <em>not</em> include — and where to add it
+            later.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm text-slate-700">
+          <p>
+            <strong>Per-tenant rate limits / quotas.</strong> Future spec. Add
+            a token-bucket check in the proxy, persist counters in Lakebase.
+          </p>
+          <p>
+            <strong>Cost / token tracking per tenant.</strong> Future spec.
+            Genie API doesn't currently expose token cost — add when surfaced.
+          </p>
+          <p>
+            <strong>Multi-Genie-space UI.</strong> Data model accommodates it
+            (
+            <code className="text-[11px] bg-slate-100 px-1 rounded">
+              client_registry.genie_space_id
+            </code>
+            ); UI surface is a follow-up.
+          </p>
+          <p>
+            <strong>Pattern B (shared SP + custom claims).</strong> Blocked on
+            Genie surface validation. The architecture for it is mentioned in{" "}
+            <code className="text-[11px] bg-slate-100 px-1 rounded">
+              docs/future-directions.md
+            </code>
+            .
+          </p>
         </CardContent>
       </Card>
     </div>
