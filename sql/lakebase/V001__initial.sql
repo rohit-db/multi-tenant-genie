@@ -20,13 +20,13 @@ CREATE TABLE client_registry (
 
 -- SP Credentials (encrypted with AES-256-GCM)
 CREATE TABLE sp_credentials (
-    id SERIAL PRIMARY KEY,
-    label VARCHAR(255) UNIQUE NOT NULL,           -- e.g., 'genie-shared-sp'
-    client_id_encrypted TEXT NOT NULL,
-    client_secret_encrypted TEXT NOT NULL,
-    workspace_url VARCHAR(500) NOT NULL,
-    is_admin BOOLEAN DEFAULT false,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    sp_app_id VARCHAR(255) PRIMARY KEY,
+    -- AES-GCM ciphertext (nonce || ciphertext || tag); base64 in column.
+    -- If aes_key is unset (local dev), value is stored as `plain:<secret>`
+    -- and a startup warning is logged.
+    secret_encrypted TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    rotated_at TIMESTAMPTZ
 );
 
 -- Audit Log
