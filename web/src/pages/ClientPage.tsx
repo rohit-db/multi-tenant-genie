@@ -96,13 +96,13 @@ export function ClientPage() {
             </div>
             <div className="space-y-1">
               <p className="text-sm font-medium leading-tight">
-                BCD &amp; Advito embedded analytics — multi-tenant isolation pattern
+                Embedded analytics — multi-tenant isolation pattern
               </p>
               <p className="text-sm text-muted-foreground leading-relaxed">
-                Same pattern for both surfaces: Advito embeds Genie in BCD Pay
-                for ~130 client organizations; BCD Decision Source + CSS
-                extend to the broader BCD client base. Every client sees only
-                their own travel bookings. This POC authenticates as{" "}
+                Each tenant queries through its own Service Principal; UC row
+                filters keep query results scoped to that tenant's data.
+                The proxy mints per-tenant OAuth tokens and audits every
+                request. Every tenant sees only{" "}
                 <span className="font-mono">client_credentials</span>{" "}
                 per-tenant and lets Unity Catalog row filters — not Genie
                 prompts — do the enforcement. Pick a tenant below and watch

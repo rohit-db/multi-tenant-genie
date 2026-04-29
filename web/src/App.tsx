@@ -32,7 +32,7 @@ function App() {
               </div>
               <p className="text-xs text-muted-foreground mt-1 truncate">
                 <Plane className="h-3 w-3 inline mr-1 -mt-0.5" />
-                BCD &amp; Advito embedded analytics — one service principal per client organization
+                A reference solution for delivering Genie to thousands of isolated tenants — one service principal per tenant
               </p>
             </div>
           </div>

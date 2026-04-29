@@ -171,7 +171,7 @@ ALTER TABLE ${ws.data.catalog}.${ws.data.schema_name}.bookings
           <ScriptStep
             n={1}
             label="Frame the problem"
-            text='"Both BCD and Advito need to deliver Genie to thousands of client organizations — Advito via embedded analytics in BCD Pay (~130 clients), BCD via Decision Source / CSS at a much larger scale. We can’t put 10K+ end users into Databricks, and we can’t trust prompt-based filters. Same pattern solves both."'
+            text=’"Deliver Genie to thousands of tenants without giving any of them a Databricks account, and prove that tenant A can never see tenant B\’s data. The same pattern works for embedded analytics in a SaaS product, partner-facing reporting, and customer-portal dashboards."’
           />
           <ScriptStep
             n={2}

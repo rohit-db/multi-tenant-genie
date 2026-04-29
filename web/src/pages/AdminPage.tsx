@@ -184,7 +184,7 @@ export function AdminPage() {
           <div>
             <CardTitle>Client organization Service Principals</CardTitle>
             <CardDescription>
-              One Databricks SP per BCD / Advito client organization. Each
+              One Databricks SP per tenant organization. Each
               SP's identity flows into{" "}
               <code className="text-[11px] bg-slate-100 px-1 rounded">
                 session_user()
