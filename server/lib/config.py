@@ -1,6 +1,8 @@
-"""Shared configuration for the multi-tenant Genie demo.
+"""Shared configuration for the multi-tenant Genie reference.
 
-All constants live here so scripts, the UI, and the POC doc stay in sync.
+In production (Databricks Apps), every value below comes from env vars
+that the app.yaml resource block injects. In local dev, point ``MT_GENIE_*``
+at your workspace via ``.env.local`` (bootstrap.sh writes one for you).
 """
 from __future__ import annotations
 
@@ -9,17 +11,16 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
-class DemoConfig:
-    profile: str = "fe-vm-serverless-jsr0s9"
-    host: str = "https://fevm-serverless-jsr0s9.cloud.databricks.com"
-    catalog: str = "serverless_jsr0s9_catalog"
-    schema: str = "mt_genie_demo"
-    secret_scope: str = "mt-genie-demo"
-    genie_space_name: str = "Multi-Tenant Bookings Demo"
-    genie_space_id: str = "01f13e70745b1ce5b9cf8d9e6a46e23f"
-    warehouse_name: str = "Serverless Starter Warehouse"
-    sp_display_prefix: str = "mt-genie-demo"
-    admin_group: str = "admins"
+class Config:
+    profile: str
+    host: str
+    catalog: str
+    schema: str
+    secret_scope: str
+    genie_space_id: str
+    warehouse_name: str
+    sp_display_prefix: str
+    admin_group: str
 
     @property
     def fq_tenants(self) -> str:
@@ -46,9 +47,18 @@ class DemoConfig:
         return f"{self.catalog}.{self.schema}.tenant_row_filter"
 
 
-CONFIG = DemoConfig(
-    profile=os.environ.get("MT_GENIE_PROFILE", DemoConfig.profile),
-    catalog=os.environ.get("MT_GENIE_CATALOG", DemoConfig.catalog),
-    schema=os.environ.get("MT_GENIE_SCHEMA", DemoConfig.schema),
-    genie_space_id=os.environ.get("MT_GENIE_SPACE_ID", DemoConfig.genie_space_id),
+def _env(name: str, default: str = "") -> str:
+    return os.environ.get(name, default).strip()
+
+
+CONFIG = Config(
+    profile=_env("MT_GENIE_PROFILE"),
+    host=_env("MT_GENIE_HOST"),
+    catalog=_env("MT_GENIE_CATALOG"),
+    schema=_env("MT_GENIE_SCHEMA", "mt_genie"),
+    secret_scope=_env("MT_GENIE_SECRET_SCOPE", "mt-genie"),
+    genie_space_id=_env("MT_GENIE_SPACE_ID"),
+    warehouse_name=_env("MT_GENIE_WAREHOUSE_NAME", "Serverless Starter Warehouse"),
+    sp_display_prefix=_env("MT_GENIE_SP_PREFIX", "mt-genie"),
+    admin_group=_env("MT_GENIE_ADMIN_GROUP", "admins"),
 )
