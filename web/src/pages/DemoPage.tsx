@@ -255,6 +255,10 @@ export function DemoPage() {
         </>
       )}
 
+      {!answer && !ask.isPending && !sweep && !sweepM.isPending && (
+        <InspectorPreview />
+      )}
+
       {sweepM.isError && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
@@ -446,5 +450,86 @@ function SweepSkeleton({ count }: { count: number }) {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+const PREVIEW_STEPS = [
+  {
+    n: 1,
+    name: "Authenticate",
+    summary: "Tenant lookup in client_registry",
+  },
+  {
+    n: 2,
+    name: "Resolve tenant",
+    summary: "→ genie_space_id, sp_app_id",
+  },
+  {
+    n: 3,
+    name: "Mint token",
+    summary: "OAuth M2M, cache-aware",
+  },
+  {
+    n: 4,
+    name: "Apply row filter",
+    summary: "session_user → tenant_id",
+  },
+  {
+    n: 5,
+    name: "Ask Genie",
+    summary: "POST /spaces/{id}/start-conversation",
+  },
+  {
+    n: 6,
+    name: "Audit",
+    summary: "audit_log row in Lakebase",
+  },
+];
+
+function InspectorPreview() {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white">
+      <div className="px-5 py-4 border-b border-slate-100 flex items-baseline justify-between gap-4">
+        <div>
+          <div className="text-xs font-medium uppercase tracking-wider text-slate-500">
+            Request flow inspector
+          </div>
+          <div className="text-sm text-slate-700 mt-1">
+            Six steps run on every <span className="font-mono text-[12px]">/api/genie/ask</span>. Step 4 is the row filter — the line between tenant A and tenant B.
+          </div>
+        </div>
+        <div className="hidden sm:block text-[11px] font-mono text-slate-400 shrink-0">
+          ask a question →
+        </div>
+      </div>
+      <div className="px-5 py-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+          {PREVIEW_STEPS.map((s) => {
+            const isHero = s.name === "Apply row filter";
+            return (
+              <div
+                key={s.n}
+                className={
+                  "rounded-md border px-2.5 py-2 " +
+                  (isHero
+                    ? "border-amber-300 bg-amber-50"
+                    : "border-slate-200 bg-slate-50/60")
+                }
+              >
+                <div className="flex items-baseline gap-1.5 text-[10px] font-mono text-slate-500">
+                  <span>{`step ${s.n}`}</span>
+                </div>
+                <div className="mt-1 text-xs font-medium leading-tight text-slate-900">
+                  {s.name}
+                </div>
+                <div className="mt-1 text-[10px] text-slate-500 leading-snug">
+                  {s.summary}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }
