@@ -74,7 +74,13 @@ export function PortalPage() {
 
   useEffect(() => {
     if (!tenantId && active.length > 0) {
-      setTenantId(active[0].tenant_id);
+      // Prefer the canonical seeded demo tenants (which have bookings data)
+      // when present; fall back to the first active tenant otherwise.
+      const PREFERRED = ["acme", "nike", "cloudventure"];
+      const preferred = PREFERRED
+        .map((p) => active.find((t) => t.tenant_id === p))
+        .find((t) => t !== undefined);
+      setTenantId(preferred?.tenant_id ?? active[0].tenant_id);
     }
   }, [tenantId, active]);
 
