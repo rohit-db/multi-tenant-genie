@@ -216,4 +216,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ question }),
     }),
+
+  // Direct SQL — runs as the tenant SP via the warehouse, row filter still applies.
+  // Used for deterministic dashboard widgets (no Genie roundtrip).
+  runSql: (tenant_id: string, sql: string) =>
+    http<{
+      columns: string[];
+      rows: (string | number | null)[][];
+      latency_ms: number;
+    }>("/genie/sql", {
+      method: "POST",
+      body: JSON.stringify({ tenant_id, sql }),
+    }),
 };

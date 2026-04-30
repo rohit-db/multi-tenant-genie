@@ -55,6 +55,17 @@ class SweepRequest(BaseModel):
     question: str
 
 
+class RunSqlRequest(BaseModel):
+    tenant_id: str
+    sql: str
+
+
+class RunSqlResponse(BaseModel):
+    columns: list[str]
+    rows: list[list]
+    latency_ms: int
+
+
 def _get_secret_for_sp(sp_app_id: str) -> str | None:
     from server.lib.repository import credential as cred_repo
     return cred_repo.get(sp_app_id)
@@ -355,5 +366,85 @@ async def sweep(req: SweepRequest) -> list[AskResponse]:
         for f in asyncio.as_completed(futures):
             results.append(await f)
         return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ----------------------------------------------------------------- run-sql
+# Direct SQL execution as the tenant SP — for dashboard widgets that need
+# deterministic queries without a Genie roundtrip. The SQL still goes
+# through the warehouse using the tenant's OAuth token, so the row filter
+# applies. Genie isn't in the loop.
+
+def _run_sql_sync(tenant_id: str, sql: str) -> RunSqlResponse:
+    import time
+    import requests
+    started = time.time()
+
+    tenants = [t for t in _mgr().list_tenants() if t.tenant_id == tenant_id]
+    if not tenants:
+        raise ValueError(f'Tenant {tenant_id} not found')
+    tenant = tenants[0]
+
+    secret = _get_secret_for_sp(tenant.sp_app_id)
+    if not secret:
+        raise ValueError(
+            f'No credential stored for tenant {tenant_id}. '
+            'Rotate on the Admin tab to regenerate.'
+        )
+
+    token = _minter.get_token(tenant.sp_app_id, secret)
+    host = (CONFIG.host or '').rstrip('/')
+    warehouse_id = _mgr().warehouse_id
+
+    r = requests.post(
+        f'{host}/api/2.0/sql/statements',
+        headers={'Authorization': f'Bearer {token}'},
+        json={
+            'warehouse_id': warehouse_id,
+            'statement': sql,
+            'wait_timeout': '30s',
+        },
+        timeout=60,
+    )
+    r.raise_for_status()
+    body = r.json()
+
+    statement_id = body.get('statement_id')
+    while body.get('status', {}).get('state') in ('PENDING', 'RUNNING'):
+        time.sleep(0.5)
+        rr = requests.get(
+            f'{host}/api/2.0/sql/statements/{statement_id}',
+            headers={'Authorization': f'Bearer {token}'},
+            timeout=30,
+        )
+        rr.raise_for_status()
+        body = rr.json()
+
+    state = body.get('status', {}).get('state')
+    if state != 'SUCCEEDED':
+        err = body.get('status', {}).get('error', {})
+        raise RuntimeError(f'SQL failed ({state}): {err.get("message", str(err))}')
+
+    manifest = body.get('manifest') or {}
+    schema = manifest.get('schema') or {}
+    columns = [c.get('name', '') for c in schema.get('columns', []) or []]
+    result = body.get('result') or {}
+    rows = result.get('data_array') or []
+
+    return RunSqlResponse(
+        columns=columns,
+        rows=rows,
+        latency_ms=int((time.time() - started) * 1000),
+    )
+
+
+@router.post('/sql', response_model=RunSqlResponse)
+async def run_sql(req: RunSqlRequest) -> RunSqlResponse:
+    try:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            _pool, _run_sql_sync, req.tenant_id, req.sql
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

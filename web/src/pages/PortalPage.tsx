@@ -21,6 +21,8 @@ import {
   ResponsiveContainer,
   BarChart,
   Bar,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   Tooltip,
@@ -28,6 +30,7 @@ import {
   Pie,
   Cell,
   CartesianGrid,
+  Legend,
 } from "recharts";
 import {
   Plane,
@@ -38,40 +41,37 @@ import {
   Bot,
   User,
   Lock,
+  RotateCcw,
+  Database,
 } from "lucide-react";
-import { api, type AskResponse, type Tenant } from "@/lib/api";
-
-// Pre-canned questions that drive the dashboard widgets.
-const Q_KPIS =
-  "How many bookings do I have, what is my total spend, what is my average booking amount, and how many distinct travelers do I have? Return one row.";
-const Q_TOP_ROUTES = "Show my top 5 routes by total spend";
-const Q_CABIN_MIX = "Show count of bookings by cabin class";
+import { api, type Tenant, type WorkspaceInfo } from "@/lib/api";
 
 const CHART_COLORS = [
-  "#6366f1", // indigo
-  "#22c55e", // emerald
-  "#f59e0b", // amber
-  "#ef4444", // rose
-  "#06b6d4", // cyan
-  "#8b5cf6", // violet
+  "#6366f1", "#22c55e", "#f59e0b", "#ef4444", "#06b6d4", "#8b5cf6",
 ];
+
+type SqlResult = {
+  columns: string[];
+  rows: (string | number | null)[][];
+  latency_ms: number;
+};
 
 interface ChatTurn {
   question: string;
-  answer: AskResponse | null;
+  answer: import("@/lib/api").AskResponse | null;
   pending: boolean;
   error?: string;
 }
 
 export function PortalPage() {
   const tenants = useQuery({ queryKey: ["tenants"], queryFn: api.tenants });
+  const ws = useQuery({ queryKey: ["ws"], queryFn: api.workspace });
   const active = useMemo(
     () => (tenants.data ?? []).filter((t) => t.status === "active"),
     [tenants.data],
   );
   const [tenantId, setTenantId] = useState<string | undefined>(undefined);
 
-  // Pick first active tenant by default
   useEffect(() => {
     if (!tenantId && active.length > 0) {
       setTenantId(active[0].tenant_id);
@@ -84,8 +84,8 @@ export function PortalPage() {
     <div className="space-y-6">
       <ProblemStatement />
 
-      {tenants.isLoading ? (
-        <div className="text-sm text-muted-foreground">Loading tenants…</div>
+      {tenants.isLoading || ws.isLoading ? (
+        <div className="text-sm text-muted-foreground">Loading…</div>
       ) : active.length === 0 ? (
         <Card>
           <CardContent className="py-10 text-center text-sm text-muted-foreground">
@@ -93,8 +93,13 @@ export function PortalPage() {
             this dashboard.
           </CardContent>
         </Card>
-      ) : tenant ? (
-        <Dashboard tenant={tenant} active={active} setTenantId={setTenantId} />
+      ) : tenant && ws.data ? (
+        <Dashboard
+          tenant={tenant}
+          active={active}
+          setTenantId={setTenantId}
+          ws={ws.data}
+        />
       ) : null}
     </div>
   );
@@ -117,14 +122,53 @@ function Dashboard({
   tenant,
   active,
   setTenantId,
+  ws,
 }: {
   tenant: Tenant;
   active: Tenant[];
   setTenantId: (id: string) => void;
+  ws: WorkspaceInfo;
 }) {
-  const kpis = useGenieQuery(tenant.tenant_id, Q_KPIS);
-  const routes = useGenieQuery(tenant.tenant_id, Q_TOP_ROUTES);
-  const cabin = useGenieQuery(tenant.tenant_id, Q_CABIN_MIX);
+  const fq = `${ws.catalog}.${ws.schema_name}`;
+
+  const sqlKpis = `SELECT
+    COUNT(*) AS bookings,
+    SUM(amount_usd) AS total_spend,
+    AVG(amount_usd) AS avg_booking,
+    COUNT(DISTINCT traveler_name) AS travelers
+  FROM ${fq}.bookings`;
+
+  const sqlTopRoutes = `SELECT route, ROUND(SUM(amount_usd), 0) AS spend
+  FROM ${fq}.bookings
+  GROUP BY route
+  ORDER BY spend DESC
+  LIMIT 5`;
+
+  const sqlCabinMix = `SELECT cabin_class, COUNT(*) AS bookings
+  FROM ${fq}.bookings
+  GROUP BY cabin_class
+  ORDER BY bookings DESC`;
+
+  const sqlMonthlyTrend = `SELECT
+    DATE_FORMAT(booked_at, 'yyyy-MM') AS month,
+    COUNT(*) AS bookings,
+    ROUND(SUM(amount_usd), 0) AS spend
+  FROM ${fq}.bookings
+  GROUP BY DATE_FORMAT(booked_at, 'yyyy-MM')
+  ORDER BY month`;
+
+  const sqlTopSuppliers = `SELECT supplier, COUNT(*) AS bookings,
+    ROUND(SUM(amount_usd), 0) AS spend
+  FROM ${fq}.bookings
+  GROUP BY supplier
+  ORDER BY bookings DESC
+  LIMIT 6`;
+
+  const kpis = useSqlQuery(tenant.tenant_id, sqlKpis);
+  const routes = useSqlQuery(tenant.tenant_id, sqlTopRoutes);
+  const cabin = useSqlQuery(tenant.tenant_id, sqlCabinMix);
+  const trend = useSqlQuery(tenant.tenant_id, sqlMonthlyTrend);
+  const suppliers = useSqlQuery(tenant.tenant_id, sqlTopSuppliers);
 
   return (
     <>
@@ -146,10 +190,7 @@ function Dashboard({
           <span className="text-[11px] uppercase tracking-wider text-slate-500">
             Acting as
           </span>
-          <Select
-            value={tenant.tenant_id}
-            onValueChange={(v) => setTenantId(v)}
-          >
+          <Select value={tenant.tenant_id} onValueChange={(v) => setTenantId(v)}>
             <SelectTrigger className="h-8 w-[200px] text-sm">
               <SelectValue />
             </SelectTrigger>
@@ -164,11 +205,15 @@ function Dashboard({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_400px] gap-5">
         <div className="space-y-5 min-w-0">
           <KpiRow kpis={kpis} />
-          <RoutesCard data={routes} />
-          <CabinMixCard data={cabin} />
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+            <RoutesCard data={routes} />
+            <CabinMixCard data={cabin} />
+          </div>
+          <MonthlyTrendCard data={trend} />
+          <SuppliersCard data={suppliers} />
         </div>
         <div className="lg:sticky lg:top-20 lg:self-start min-w-0">
           <ChatPanel tenant={tenant} />
@@ -178,31 +223,36 @@ function Dashboard({
   );
 }
 
-function KpiRow({ kpis }: { kpis: ReturnType<typeof useGenieQuery> }) {
-  const stats = parseKpiRow(kpis.data);
+function KpiRow({ kpis }: { kpis: ReturnType<typeof useSqlQuery> }) {
+  const row = kpis.data?.rows[0] ?? [];
+  const cols = kpis.data?.columns ?? [];
+  const get = (n: string) => {
+    const i = cols.findIndex((c) => c.toLowerCase() === n);
+    return i >= 0 ? row[i] : null;
+  };
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
       <KpiCard
         label="Bookings"
-        value={stats.bookings}
+        value={formatNumber(get("bookings"))}
         icon={Plane}
         loading={kpis.isLoading}
       />
       <KpiCard
         label="Total spend"
-        value={stats.totalSpend}
+        value={formatMoney(get("total_spend"))}
         icon={DollarSign}
         loading={kpis.isLoading}
       />
       <KpiCard
         label="Avg booking"
-        value={stats.avgBooking}
+        value={formatMoney(get("avg_booking"))}
         icon={DollarSign}
         loading={kpis.isLoading}
       />
       <KpiCard
         label="Travelers"
-        value={stats.travelers}
+        value={formatNumber(get("travelers"))}
         icon={Users}
         loading={kpis.isLoading}
       />
@@ -242,111 +292,260 @@ function KpiCard({
   );
 }
 
-function RoutesCard({ data }: { data: ReturnType<typeof useGenieQuery> }) {
-  const rows = parseLabelValue(data.data);
+function RoutesCard({ data }: { data: ReturnType<typeof useSqlQuery> }) {
+  const rows = parseLabelValue(data.data, "route", "spend");
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Top routes by spend</CardTitle>
-        <CardDescription>
-          Genie generated SQL; rows here are this tenant&rsquo;s only.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        {data.isLoading ? (
-          <div className="h-[220px] bg-slate-50 rounded animate-pulse" />
-        ) : rows.length === 0 ? (
-          <EmptyChart message="No data" />
-        ) : (
-          <div className="h-[220px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={rows} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
-                <CartesianGrid stroke="#f1f5f9" vertical={false} />
-                <XAxis
-                  dataKey="label"
-                  tick={{ fontSize: 11, fill: "#64748b" }}
-                  axisLine={{ stroke: "#e2e8f0" }}
-                  tickLine={false}
-                />
-                <YAxis
-                  tick={{ fontSize: 11, fill: "#64748b" }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <Tooltip
-                  contentStyle={{
-                    fontSize: 12,
-                    border: "1px solid #e2e8f0",
-                    borderRadius: 6,
-                  }}
-                />
-                <Bar dataKey="value" fill="#6366f1" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </CardContent>
-    </Card>
+    <ChartShell
+      title="Top routes by spend"
+      description="Total USD billed per route, this tenant only."
+      loading={data.isLoading}
+      empty={rows.length === 0}
+    >
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart
+          data={rows}
+          margin={{ top: 8, right: 8, left: -16, bottom: 0 }}
+        >
+          <CartesianGrid stroke="#f1f5f9" vertical={false} />
+          <XAxis
+            dataKey="label"
+            tick={{ fontSize: 11, fill: "#64748b" }}
+            axisLine={{ stroke: "#e2e8f0" }}
+            tickLine={false}
+          />
+          <YAxis
+            tick={{ fontSize: 11, fill: "#64748b" }}
+            axisLine={false}
+            tickLine={false}
+          />
+          <Tooltip
+            contentStyle={{
+              fontSize: 12,
+              border: "1px solid #e2e8f0",
+              borderRadius: 6,
+            }}
+            formatter={(v) => [formatMoney(v), "Spend"]}
+          />
+          <Bar dataKey="value" fill="#6366f1" radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </ChartShell>
   );
 }
 
-function CabinMixCard({ data }: { data: ReturnType<typeof useGenieQuery> }) {
-  const rows = parseLabelValue(data.data);
+function CabinMixCard({ data }: { data: ReturnType<typeof useSqlQuery> }) {
+  const rows = parseLabelValue(data.data, "cabin_class", "bookings");
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Cabin class mix</CardTitle>
-        <CardDescription>
-          Distribution of this tenant&rsquo;s bookings.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        {data.isLoading ? (
-          <div className="h-[220px] bg-slate-50 rounded animate-pulse" />
-        ) : rows.length === 0 ? (
-          <EmptyChart message="No data" />
-        ) : (
-          <div className="h-[220px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={rows}
-                  dataKey="value"
-                  nameKey="label"
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={50}
-                  outerRadius={80}
-                  paddingAngle={2}
-                >
-                  {rows.map((_, i) => (
-                    <Cell
-                      key={i}
-                      fill={CHART_COLORS[i % CHART_COLORS.length]}
-                    />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{
-                    fontSize: 12,
-                    border: "1px solid #e2e8f0",
-                    borderRadius: 6,
-                  }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </CardContent>
-    </Card>
+    <ChartShell
+      title="Cabin class mix"
+      description="Distribution of this tenant's bookings."
+      loading={data.isLoading}
+      empty={rows.length === 0}
+    >
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Pie
+            data={rows}
+            dataKey="value"
+            nameKey="label"
+            cx="50%"
+            cy="50%"
+            innerRadius={50}
+            outerRadius={80}
+            paddingAngle={2}
+          >
+            {rows.map((_, i) => (
+              <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+            ))}
+          </Pie>
+          <Legend
+            verticalAlign="bottom"
+            height={28}
+            iconSize={8}
+            wrapperStyle={{ fontSize: 11, color: "#64748b" }}
+          />
+          <Tooltip
+            contentStyle={{
+              fontSize: 12,
+              border: "1px solid #e2e8f0",
+              borderRadius: 6,
+            }}
+          />
+        </PieChart>
+      </ResponsiveContainer>
+    </ChartShell>
   );
 }
 
-function EmptyChart({ message }: { message: string }) {
+function MonthlyTrendCard({ data }: { data: ReturnType<typeof useSqlQuery> }) {
+  const rows = useMemo(() => {
+    if (!data.data) return [];
+    return data.data.rows.map((r) => ({
+      month: String(r[0] ?? ""),
+      bookings: Number(r[1] ?? 0),
+      spend: Number(r[2] ?? 0),
+    }));
+  }, [data.data]);
+
   return (
-    <div className="h-[220px] flex items-center justify-center text-xs text-slate-500">
-      {message}
-    </div>
+    <ChartShell
+      title="Bookings + spend over time"
+      description="Monthly trend, this tenant only."
+      loading={data.isLoading}
+      empty={rows.length === 0}
+      height={240}
+    >
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart
+          data={rows}
+          margin={{ top: 12, right: 12, left: -16, bottom: 0 }}
+        >
+          <CartesianGrid stroke="#f1f5f9" vertical={false} />
+          <XAxis
+            dataKey="month"
+            tick={{ fontSize: 11, fill: "#64748b" }}
+            axisLine={{ stroke: "#e2e8f0" }}
+            tickLine={false}
+          />
+          <YAxis
+            yAxisId="left"
+            tick={{ fontSize: 11, fill: "#64748b" }}
+            axisLine={false}
+            tickLine={false}
+          />
+          <YAxis
+            yAxisId="right"
+            orientation="right"
+            tick={{ fontSize: 11, fill: "#64748b" }}
+            axisLine={false}
+            tickLine={false}
+          />
+          <Tooltip
+            contentStyle={{
+              fontSize: 12,
+              border: "1px solid #e2e8f0",
+              borderRadius: 6,
+            }}
+          />
+          <Legend
+            verticalAlign="top"
+            iconSize={8}
+            wrapperStyle={{ fontSize: 11, color: "#64748b" }}
+          />
+          <Line
+            yAxisId="left"
+            type="monotone"
+            dataKey="bookings"
+            stroke="#6366f1"
+            strokeWidth={2}
+            dot={{ r: 3 }}
+          />
+          <Line
+            yAxisId="right"
+            type="monotone"
+            dataKey="spend"
+            stroke="#22c55e"
+            strokeWidth={2}
+            dot={{ r: 3 }}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </ChartShell>
+  );
+}
+
+function SuppliersCard({ data }: { data: ReturnType<typeof useSqlQuery> }) {
+  const rows = useMemo(() => {
+    if (!data.data) return [];
+    return data.data.rows.map((r) => ({
+      supplier: String(r[0] ?? ""),
+      bookings: Number(r[1] ?? 0),
+      spend: Number(r[2] ?? 0),
+    }));
+  }, [data.data]);
+
+  return (
+    <ChartShell
+      title="Top suppliers"
+      description="By booking count + total spend."
+      loading={data.isLoading}
+      empty={rows.length === 0}
+      height={240}
+    >
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart
+          data={rows}
+          layout="vertical"
+          margin={{ top: 8, right: 16, left: 60, bottom: 0 }}
+        >
+          <CartesianGrid stroke="#f1f5f9" horizontal={false} />
+          <XAxis
+            type="number"
+            tick={{ fontSize: 11, fill: "#64748b" }}
+            axisLine={false}
+            tickLine={false}
+          />
+          <YAxis
+            type="category"
+            dataKey="supplier"
+            tick={{ fontSize: 11, fill: "#475569" }}
+            axisLine={false}
+            tickLine={false}
+            width={80}
+          />
+          <Tooltip
+            contentStyle={{
+              fontSize: 12,
+              border: "1px solid #e2e8f0",
+              borderRadius: 6,
+            }}
+          />
+          <Bar dataKey="bookings" fill="#06b6d4" radius={[0, 4, 4, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </ChartShell>
+  );
+}
+
+function ChartShell({
+  title,
+  description,
+  loading,
+  empty,
+  height = 220,
+  children,
+}: {
+  title: string;
+  description: string;
+  loading: boolean;
+  empty: boolean;
+  height?: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">{title}</CardTitle>
+        <CardDescription>{description}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div
+            className="bg-slate-50 rounded animate-pulse"
+            style={{ height }}
+          />
+        ) : empty ? (
+          <div
+            className="flex items-center justify-center text-xs text-slate-500"
+            style={{ height }}
+          >
+            No data
+          </div>
+        ) : (
+          <div style={{ height }}>{children}</div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -377,46 +576,58 @@ function ChatPanel({ tenant }: { tenant: Tenant }) {
     },
   });
 
-  // Reset chat on tenant switch
   useEffect(() => {
     setHistory([]);
     setDraft("");
   }, [tenant.tenant_id]);
 
-  // Scroll to bottom on new turn
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [history]);
 
-  const submit = () => {
-    const q = draft.trim();
-    if (!q || ask.isPending) return;
-    setHistory((h) => [...h, { question: q, answer: null, pending: true }]);
+  const submit = (q?: string) => {
+    const text = (q ?? draft).trim();
+    if (!text || ask.isPending) return;
+    setHistory((h) => [...h, { question: text, answer: null, pending: true }]);
     setDraft("");
-    ask.mutate(q);
+    ask.mutate(text);
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base flex items-center gap-2">
-          <Bot className="h-4 w-4 text-indigo-600" />
-          Ask the data
-        </CardTitle>
-        <CardDescription>
-          Powered by Genie, scoped to {tenant.tenant_name}&rsquo;s rows. Ask
-          anything about your bookings, routes, or travelers.
-        </CardDescription>
+    <Card className="overflow-hidden">
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Bot className="h-4 w-4 text-indigo-600" />
+              Ask the data
+            </CardTitle>
+            <CardDescription className="mt-1">
+              Genie, scoped to {tenant.tenant_name}&rsquo;s rows.
+            </CardDescription>
+          </div>
+          {history.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-[11px] text-slate-500 hover:text-slate-900"
+              onClick={() => setHistory([])}
+            >
+              <RotateCcw className="h-3 w-3 mr-1" />
+              Clear
+            </Button>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="space-y-3">
         <div
           ref={scrollRef}
-          className="rounded-md border bg-slate-50/40 p-3 max-h-[260px] overflow-y-auto space-y-3"
+          className="rounded-md border bg-slate-50/40 p-3.5 h-[360px] overflow-y-auto space-y-4"
         >
           {history.length === 0 ? (
-            <EmptyChat />
+            <EmptyChat tenantName={tenant.tenant_name} onPick={(q) => submit(q)} />
           ) : (
             history.map((turn, i) => <ChatTurnRow key={i} turn={turn} />)
           )}
@@ -424,7 +635,7 @@ function ChatPanel({ tenant }: { tenant: Tenant }) {
 
         <div className="flex gap-2">
           <Input
-            placeholder={`Ask anything about ${tenant.tenant_name}'s data…`}
+            placeholder={`Ask about ${tenant.tenant_name}'s data…`}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -435,7 +646,7 @@ function ChatPanel({ tenant }: { tenant: Tenant }) {
             }}
             disabled={ask.isPending}
           />
-          <Button onClick={submit} disabled={!draft.trim() || ask.isPending}>
+          <Button onClick={() => submit()} disabled={!draft.trim() || ask.isPending}>
             {ask.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
@@ -443,36 +654,58 @@ function ChatPanel({ tenant }: { tenant: Tenant }) {
             )}
           </Button>
         </div>
-
-        <SuggestionChips
-          onPick={(q) => {
-            setDraft(q);
-          }}
-        />
       </CardContent>
     </Card>
   );
 }
 
-function EmptyChat() {
+const STARTER_QUESTIONS = [
+  "What was my busiest month?",
+  "Which suppliers do I use most?",
+  "Top 5 travelers by spend",
+  "How many international trips this year?",
+];
+
+function EmptyChat({
+  tenantName,
+  onPick,
+}: {
+  tenantName: string;
+  onPick: (q: string) => void;
+}) {
   return (
-    <div className="text-xs text-slate-500 text-center py-6">
-      Ask a question to start. The proxy mints a token as this tenant&rsquo;s
-      Service Principal; UC row filters scope every result automatically.
+    <div className="space-y-3 py-2">
+      <p className="text-xs text-slate-500 leading-relaxed">
+        Ask any question about <span className="font-medium">{tenantName}</span>
+        &rsquo;s data. The proxy mints a Service Principal token and Genie
+        runs the query — UC row filters scope every result.
+      </p>
+      <div className="space-y-1.5">
+        {STARTER_QUESTIONS.map((q) => (
+          <button
+            key={q}
+            type="button"
+            onClick={() => onPick(q)}
+            className="w-full text-left text-xs text-slate-700 hover:text-slate-900 hover:bg-white border border-slate-200 rounded-md px-2.5 py-2 bg-white/60 transition-colors"
+          >
+            {q}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
 
 function ChatTurnRow({ turn }: { turn: ChatTurn }) {
   return (
-    <div className="space-y-2">
-      <div className="flex items-start gap-2">
+    <div className="space-y-2.5">
+      <div className="flex items-start gap-2.5">
         <div className="h-6 w-6 rounded-full bg-slate-200 flex items-center justify-center shrink-0 mt-0.5">
           <User className="h-3 w-3 text-slate-600" />
         </div>
-        <div className="text-sm pt-0.5">{turn.question}</div>
+        <div className="text-sm pt-0.5 flex-1 min-w-0">{turn.question}</div>
       </div>
-      <div className="flex items-start gap-2">
+      <div className="flex items-start gap-2.5">
         <div className="h-6 w-6 rounded-full bg-indigo-100 flex items-center justify-center shrink-0 mt-0.5">
           <Bot className="h-3 w-3 text-indigo-700" />
         </div>
@@ -493,10 +726,12 @@ function ChatTurnRow({ turn }: { turn: ChatTurn }) {
   );
 }
 
-function ChatAnswer({ a }: { a: AskResponse }) {
+function ChatAnswer({ a }: { a: import("@/lib/api").AskResponse }) {
   return (
-    <div className="space-y-1.5">
-      {a.answer_text && <div className="text-slate-800">{a.answer_text}</div>}
+    <div className="space-y-2">
+      {a.answer_text && (
+        <div className="text-slate-800 leading-relaxed">{a.answer_text}</div>
+      )}
       {a.rows.length > 0 && (
         <div className="rounded border bg-white text-xs overflow-x-auto">
           <table className="min-w-full">
@@ -505,7 +740,7 @@ function ChatAnswer({ a }: { a: AskResponse }) {
                 {a.columns.map((c) => (
                   <th
                     key={c}
-                    className="text-left font-medium text-slate-600 px-2 py-1.5"
+                    className="text-left font-medium text-slate-600 px-2 py-1.5 whitespace-nowrap"
                   >
                     {c}
                   </th>
@@ -516,7 +751,7 @@ function ChatAnswer({ a }: { a: AskResponse }) {
               {a.rows.slice(0, 8).map((r, i) => (
                 <tr key={i} className="border-b last:border-0">
                   {r.map((v, j) => (
-                    <td key={j} className="px-2 py-1.5 font-mono">
+                    <td key={j} className="px-2 py-1.5 font-mono whitespace-nowrap">
                       {formatCell(v)}
                     </td>
                   ))}
@@ -526,31 +761,16 @@ function ChatAnswer({ a }: { a: AskResponse }) {
           </table>
         </div>
       )}
-      <div className="text-[10px] text-slate-400 font-mono">
-        {a.latency_ms} ms · {a.rows.length} row{a.rows.length === 1 ? "" : "s"}
+      <div className="text-[10px] text-slate-400 font-mono flex items-center gap-2">
+        <span className="inline-flex items-center gap-1">
+          <Database className="h-2.5 w-2.5" />
+          via Genie
+        </span>
+        <span>·</span>
+        <span>{a.latency_ms} ms</span>
+        <span>·</span>
+        <span>{a.rows.length} row{a.rows.length === 1 ? "" : "s"}</span>
       </div>
-    </div>
-  );
-}
-
-function SuggestionChips({ onPick }: { onPick: (q: string) => void }) {
-  const chips = [
-    "What was my busiest month?",
-    "Which suppliers do I use most?",
-    "Top travelers by spend",
-  ];
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {chips.map((c) => (
-        <button
-          key={c}
-          type="button"
-          onClick={() => onPick(c)}
-          className="text-[11px] text-slate-600 hover:text-slate-900 border border-slate-200 hover:border-slate-300 rounded-full px-2.5 py-1 bg-white"
-        >
-          {c}
-        </button>
-      ))}
     </div>
   );
 }
@@ -559,57 +779,26 @@ function SuggestionChips({ onPick }: { onPick: (q: string) => void }) {
 // helpers
 // ============================================================================
 
-function useGenieQuery(tenantId: string, question: string) {
-  return useQuery({
-    queryKey: ["genie-portal", tenantId, question],
-    queryFn: () => api.ask(tenantId, question),
+function useSqlQuery(tenantId: string, sql: string) {
+  return useQuery<SqlResult>({
+    queryKey: ["portal-sql", tenantId, sql],
+    queryFn: () => api.runSql(tenantId, sql),
     staleTime: 60_000,
     retry: false,
   });
 }
 
-function parseKpiRow(resp: AskResponse | undefined) {
-  const empty = {
-    bookings: "—",
-    totalSpend: "—",
-    avgBooking: "—",
-    travelers: "—",
-  };
-  if (!resp || resp.rows.length === 0) return empty;
-  const row = resp.rows[0];
-  // Try to find columns by name first; fall back to positional.
-  const idx = (...names: string[]): number => {
-    for (const n of names) {
-      const i = resp.columns.findIndex((c) =>
-        c.toLowerCase().includes(n.toLowerCase()),
-      );
-      if (i >= 0) return i;
-    }
-    return -1;
-  };
-  const bookingsIdx = idx("bookings", "count");
-  const spendIdx = idx("total_spend", "spend", "sum");
-  const avgIdx = idx("avg", "average", "mean");
-  const travelersIdx = idx("travelers", "distinct");
-
-  const get = (i: number, fallback: number): unknown =>
-    i >= 0 && i < row.length ? row[i] : row[fallback] ?? null;
-
-  return {
-    bookings: formatNumber(get(bookingsIdx, 0)),
-    totalSpend: formatMoney(get(spendIdx, 1)),
-    avgBooking: formatMoney(get(avgIdx, 2)),
-    travelers: formatNumber(get(travelersIdx, 3)),
-  };
-}
-
 function parseLabelValue(
-  resp: AskResponse | undefined,
+  resp: SqlResult | undefined,
+  labelCol: string,
+  valueCol: string,
 ): Array<{ label: string; value: number }> {
-  if (!resp || resp.rows.length === 0) return [];
+  if (!resp) return [];
+  const li = resp.columns.findIndex((c) => c.toLowerCase() === labelCol);
+  const vi = resp.columns.findIndex((c) => c.toLowerCase() === valueCol);
   return resp.rows.slice(0, 8).map((r) => ({
-    label: String(r[0] ?? ""),
-    value: Number(r[1] ?? 0),
+    label: String(r[li >= 0 ? li : 0] ?? ""),
+    value: Number(r[vi >= 0 ? vi : 1] ?? 0),
   }));
 }
 
