@@ -1,20 +1,20 @@
-# Pattern A: SP-per-Client
+# The Pattern: SP per Tenant + UC Row Filters
 
 ## Overview
 
-Each client gets its own Databricks Service Principal. Row-level security is enforced via dynamic views that filter on `session_user()`, which returns the SP's application ID.
+Each tenant gets its own Databricks Service Principal. Row-level security is enforced via dynamic views that filter on `session_user()`, which returns the SP's application ID.
 
 **Use this pattern when:**
 - Custom claims (`current_oauth_custom_identity_claims()`) are not yet supported on the Genie surface
-- You need per-client compute attribution / chargeback
-- You have hundreds (not thousands) of clients and can manage the SP lifecycle
+- You need per-tenant compute attribution / chargeback
+- You have hundreds (not thousands) of tenants and can manage the SP lifecycle
 
 ## Architecture
 
 ```
-Client A ──► Proxy ──► SP-A token ──► Genie ──► UC: session_user() = SP-A app_id
-Client B ──► Proxy ──► SP-B token ──► Genie ──► UC: session_user() = SP-B app_id
-Client C ──► Proxy ──► SP-C token ──► Genie ──► UC: session_user() = SP-C app_id
+Tenant A ──► Proxy ──► SP-A token ──► Genie ──► UC: session_user() = SP-A app_id
+Tenant B ──► Proxy ──► SP-B token ──► Genie ──► UC: session_user() = SP-B app_id
+Tenant C ──► Proxy ──► SP-C token ──► Genie ──► UC: session_user() = SP-C app_id
 ```
 
 ## Service Principal Lifecycle
@@ -79,14 +79,14 @@ def provision_client(account_client: AccountClient, tenant_id: str,
 ```python
 import time
 
-clients = ["acme-corp", "globex", "initech", ...]  # thousands
+tenants = ["acme-corp", "globex", "initech", ...]  # thousands
 WORKSPACE_ID = 123456789
 
 # Create a group first — UC grants go to the group
 genie_group = a.groups.create(display_name="genie-clients")
 
 credentials = []
-for i, tenant_id in enumerate(clients):
+for i, tenant_id in enumerate(tenants):
     creds = provision_client(a, tenant_id, WORKSPACE_ID, genie_group.id)
     credentials.append(creds)
 
@@ -100,7 +100,7 @@ for i, tenant_id in enumerate(clients):
 ### Offboarding
 
 ```python
-def offboard_client(account_client: AccountClient, sp_id: str):
+def offboard_tenant(account_client: AccountClient, sp_id: str):
     """Deactivate SP (soft delete) or hard delete."""
     # Soft delete — preserves audit trail
     account_client.service_principals.patch(
@@ -204,6 +204,6 @@ for grant in [
 ## When to Use This Pattern
 
 - Custom claims not yet supported on Genie surface
-- Per-client compute isolation needed (dedicated warehouses per SP)
-- Client count is manageable (hundreds, not tens of thousands)
+- Per-tenant compute isolation needed (dedicated warehouses per SP)
+- Tenant count is manageable (hundreds, not tens of thousands)
 - Need per-SP cost attribution via system tables
