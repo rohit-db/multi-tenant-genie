@@ -94,7 +94,7 @@ for i, tenant_id in enumerate(tenants):
     if i % 50 == 49:
         time.sleep(60)
 
-# Store credentials in Lakebase (encrypted) — see implementation-guide.md
+# Store credentials in Lakebase (encrypted) — see server/lib/repository/credential.py
 ```
 
 ### Offboarding

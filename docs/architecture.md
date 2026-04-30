@@ -91,7 +91,7 @@ The customer analytics data lives in UC, **not** in Lakebase:
 
 This split means the proxy's operational data (Lakebase) is fully isolated from the governed analytics data (UC Delta). Rotate or swap one without touching the other.
 
-See [Implementation Guide](implementation-guide.md) for full schema.
+See [`sql/setup.sql`](../sql/setup.sql) and [`sql/lakebase/V001__initial.sql`](../sql/lakebase/V001__initial.sql) for the full schema.
 
 > The live architecture diagram is rendered in the app's Architecture tab. The Mermaid source is in [web/src/pages/ArchitecturePage.tsx](../web/src/pages/ArchitecturePage.tsx) (search for `ARCH_DIAGRAM`).
 

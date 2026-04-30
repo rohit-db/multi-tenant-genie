@@ -154,7 +154,7 @@ OAuth tokens last 1 hour. Caching avoids redundant OIDC calls:
 
 ```python
 # Per-tenant token with proactive refresh
-# See implementation-guide.md for TokenMinter setup
+# See server/lib/token_minter.py for the TokenMinter implementation
 ```
 
 ## Per-Tenant Rate Limiting
