@@ -3,6 +3,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api";
 import { AdminPage } from "@/pages/AdminPage";
 import { DemoPage } from "@/pages/DemoPage";
+import { PortalPage } from "@/pages/PortalPage";
 import { ArchitecturePage } from "@/pages/ArchitecturePage";
 
 function App() {
@@ -42,13 +43,19 @@ function App() {
           </p>
         </div>
 
-        <Tabs defaultValue="demo" className="w-full">
+        <Tabs defaultValue="portal" className="w-full">
           <TabsList className="bg-transparent border-b border-slate-200 rounded-none w-full justify-start h-auto p-0 mb-6 gap-6">
+            <TabsTrigger
+              value="portal"
+              className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:text-slate-900 data-[state=active]:border-slate-900 text-slate-500 border-b-2 border-transparent rounded-none px-0 pb-3 pt-1 font-medium"
+            >
+              Portal
+            </TabsTrigger>
             <TabsTrigger
               value="demo"
               className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:text-slate-900 data-[state=active]:border-slate-900 text-slate-500 border-b-2 border-transparent rounded-none px-0 pb-3 pt-1 font-medium"
             >
-              Demo
+              Isolation proof
             </TabsTrigger>
             <TabsTrigger
               value="admin"
@@ -64,6 +71,9 @@ function App() {
             </TabsTrigger>
           </TabsList>
 
+          <TabsContent value="portal">
+            <PortalPage />
+          </TabsContent>
           <TabsContent value="demo">
             <DemoPage />
           </TabsContent>
