@@ -1,19 +1,19 @@
-"""Service Principal lifecycle for the multi-tenant Genie demo.
+"""Service Principal lifecycle for the multi-tenant Genie reference.
 
 Each public method performs one lifecycle operation AND updates the UC
 mapping table so UC row filters reflect the change immediately.
 
 Design notes
 ------------
-* Uses workspace-level SPs (FEVM doesn't grant me account admin). In prod,
-  account-level SPs are preferred so the same identity works across
-  workspaces. The API surface is identical.
+* Uses workspace-level SPs (the proxy may not have account-admin
+  privileges). In prod, account-level SPs are preferred so the same
+  identity works across workspaces. The API surface is identical.
 * One OAuth secret per SP. For real zero-downtime rotation, create a
   second secret, roll callers to it, then delete the first. `rotate()`
   below demonstrates the overlap pattern.
-* Secret material is stored in the ${scope} Databricks secret scope
-  under the key ``<sp_app_id>``. The scope is workspace-scoped and
-  ACL'd to admins only.
+* SP credentials are stored in Lakebase ``sp_credentials``, AES-GCM
+  encrypted at rest. The legacy Databricks secret-scope path is no
+  longer used.
 * UC mapping updates go through the SQL warehouse (no DBFS, no driver).
 """
 from __future__ import annotations
