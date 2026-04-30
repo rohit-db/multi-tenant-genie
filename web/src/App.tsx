@@ -36,13 +36,7 @@ function App() {
         </div>
       </header>
 
-      <main className="container mx-auto px-6 py-10">
-        <div className="mb-6">
-          <p className="text-sm text-slate-600 max-w-2xl">
-            A reference for delivering Genie to thousands of isolated tenants — one Service Principal per tenant, UC row filters for hard data isolation, no Databricks accounts for end users.
-          </p>
-        </div>
-
+      <main className="container mx-auto px-6 py-8">
         <Tabs defaultValue="portal" className="w-full">
           <TabsList className="bg-transparent border-b border-slate-200 rounded-none w-full justify-start h-auto p-0 mb-6 gap-6">
             <TabsTrigger

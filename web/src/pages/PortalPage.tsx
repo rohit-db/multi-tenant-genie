@@ -33,7 +33,6 @@ import {
   Plane,
   DollarSign,
   Users,
-  Sparkles,
   Send,
   Loader2,
   Bot,
@@ -103,30 +102,14 @@ export function PortalPage() {
 
 function ProblemStatement() {
   return (
-    <Card className="border-indigo-100 bg-gradient-to-br from-indigo-50/60 via-white to-white">
-      <CardContent className="py-5">
-        <div className="flex items-start gap-4">
-          <div className="h-10 w-10 rounded-md bg-slate-900 flex items-center justify-center shrink-0">
-            <Sparkles className="h-5 w-5 text-white" />
-          </div>
-          <div className="space-y-1.5 min-w-0">
-            <p className="text-sm font-semibold leading-tight">
-              The customer-facing data app you&rsquo;re probably building
-            </p>
-            <p className="text-sm text-slate-600 leading-relaxed max-w-3xl">
-              Most teams ship something like this: a branded portal with charts
-              driven by tenant data and an embedded chat assistant powered by
-              Genie. The hard part isn&rsquo;t the dashboard — it&rsquo;s
-              guaranteeing that <span className="font-medium">tenant A
-              never sees tenant B&rsquo;s data</span>, even though they share
-              the same workspace, the same warehouse, and the same Genie
-              Space. Below is one tenant&rsquo;s view of that app, served
-              through this reference proxy.
-            </p>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+    <p className="text-sm text-slate-600 max-w-3xl">
+      A typical SaaS data app: branded portal, tenant-scoped charts, embedded
+      Genie chat. The hard part isn&rsquo;t the dashboard — it&rsquo;s
+      guaranteeing <span className="font-medium text-slate-900">tenant A
+      never sees tenant B&rsquo;s data</span> when they share the same
+      workspace, warehouse, and Genie Space. Below is one tenant&rsquo;s view,
+      served through this reference proxy.
+    </p>
   );
 }
 
@@ -181,14 +164,16 @@ function Dashboard({
         </div>
       </div>
 
-      <KpiRow kpis={kpis} />
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        <RoutesCard data={routes} />
-        <CabinMixCard data={cabin} />
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] gap-5">
+        <div className="space-y-5 min-w-0">
+          <KpiRow kpis={kpis} />
+          <RoutesCard data={routes} />
+          <CabinMixCard data={cabin} />
+        </div>
+        <div className="lg:sticky lg:top-20 lg:self-start min-w-0">
+          <ChatPanel tenant={tenant} />
+        </div>
       </div>
-
-      <ChatPanel tenant={tenant} />
     </>
   );
 }
