@@ -60,6 +60,15 @@ def _get_secret_for_sp(sp_app_id: str) -> str | None:
     return cred_repo.get(sp_app_id)
 
 
+def _lakebase_target() -> str:
+    """Best-effort 'host:port/db' label for inspector code snippets."""
+    import os
+    host = os.environ.get("PGHOST", "localhost")
+    port = os.environ.get("PGPORT", "5432")
+    db = os.environ.get("PGDATABASE", "mtg")
+    return f"{host}:{port}/{db}"
+
+
 def _ask_sync(
     tenant_id: str,
     question: str,
@@ -68,32 +77,62 @@ def _ask_sync(
     inspect: bool = False,
 ) -> AskResponse:
     insp = Inspector() if inspect else None
+    lakebase = _lakebase_target() if insp is not None else None
+    workspace_host = CONFIG.host or "<workspace>"
 
-    # Step 1: Authenticate (resolve which tenant the request belongs to)
+    # Step 1: Authenticate — resolve tenant from Lakebase client_registry
     if insp is not None:
         with insp.step("Authenticate") as step:
             tenants = [t for t in _mgr().list_tenants() if t.tenant_id == tenant_id]
             if not tenants:
                 raise ValueError(f'Tenant {tenant_id} not found')
             tenant = tenants[0]
-            step.summary = f"Tenant resolved → {tenant.tenant_id} (sp_app_id={tenant.sp_app_id[:12]}…)"
-            step.code_snippet = "tenants = mgr.list_tenants()  # reads client_registry"
+            step.summary = (
+                f"Tenant '{tenant.tenant_id}' found in client_registry "
+                f"({tenant.status}, sp_app_id={tenant.sp_app_id[:12]}…)"
+            )
+            step.code_snippet = (
+                "-- Lakebase: " + lakebase + "\n"
+                "SELECT tenant_id, display_name, sp_app_id, sp_display_name,\n"
+                "       status, genie_space_id, metadata,\n"
+                "       created_at, updated_at\n"
+                "FROM client_registry\n"
+                "ORDER BY created_at DESC;"
+            )
+            step.payload_in = {"tenant_id": tenant_id}
+            step.payload_out = {
+                "tenant_id": tenant.tenant_id,
+                "display_name": tenant.tenant_name,
+                "sp_app_id": tenant.sp_app_id,
+                "status": tenant.status,
+            }
     else:
         tenants = [t for t in _mgr().list_tenants() if t.tenant_id == tenant_id]
         if not tenants:
             raise ValueError(f'Tenant {tenant_id} not found')
         tenant = tenants[0]
 
-    # Step 2: Resolve tenant (Lakebase lookup → genie_space_id)
+    # Step 2: Resolve tenant — pick the Genie space for this tenant
     if insp is not None:
         with insp.step("Resolve tenant") as step:
             space_id = CONFIG.genie_space_id  # per-tenant override is Phase-2-future
-            step.summary = f"genie_space_id={space_id[:12]}… (workspace global)"
-            step.code_snippet = "tenant_repo.get(tenant_id)  # → client_registry row"
+            step.summary = (
+                f"genie_space_id={space_id[:12]}… (workspace global; per-tenant "
+                f"override unset)"
+            )
+            step.code_snippet = (
+                "# Per-tenant override:\n"
+                "space_id = tenant.genie_space_id or CONFIG.genie_space_id\n"
+                "# (no extra query — row already fetched in step 1)"
+            )
+            step.payload_out = {
+                "genie_space_id_override": None,
+                "genie_space_id_resolved": space_id,
+            }
     else:
         space_id = CONFIG.genie_space_id
 
-    # Step 3: Mint token
+    # Step 3: Mint token — OAuth M2M against /oidc/v1/token
     if insp is not None:
         with insp.step("Mint token") as step:
             secret = _get_secret_for_sp(tenant.sp_app_id)
@@ -102,10 +141,25 @@ def _ask_sync(
                     f"No credential stored for tenant {tenant_id}. "
                     "Rotate on the Admin tab to regenerate."
                 )
-            step.summary = "OAuth M2M token (cache-aware)"
-            step.code_snippet = (
-                "minter.get_token(client_id, client_secret)  # /oidc/v1/token"
+            step.summary = (
+                f"Exchange tenant SP client_id+secret at "
+                f"{workspace_host.replace('https://', '')}/oidc/v1/token "
+                "(cache-aware, ~55min TTL)"
             )
+            step.code_snippet = (
+                f"POST {workspace_host}/oidc/v1/token\n"
+                "Authorization: Basic <base64(client_id:client_secret)>\n"
+                "Content-Type: application/x-www-form-urlencoded\n\n"
+                "grant_type=client_credentials&scope=all-apis"
+            )
+            step.payload_in = {
+                "client_id": tenant.sp_app_id,
+                "client_secret": "<from sp_credentials, AES-GCM decrypted>",
+            }
+            step.payload_out = {
+                "access_token": "<JWT>",
+                "expires_in": "~3300 (TTL)",
+            }
     else:
         secret = _get_secret_for_sp(tenant.sp_app_id)
         if not secret:
@@ -119,20 +173,29 @@ def _ask_sync(
         insp.add_static_step(
             "Apply row filter",
             summary=(
-                f"Filter resolves for sp_app_id={tenant.sp_app_id[:12]}… "
-                f"→ tenant_id='{tenant.tenant_id}'"
+                f"In-warehouse: when this SP queries bookings/customers, UC "
+                f"runs tenant_row_filter(tenant_id) joining sp_tenant_mapping "
+                f"on session_user()={tenant.sp_app_id[:12]}… → keeps only "
+                f"rows where tenant_id='{tenant.tenant_id}'."
             ),
             code_snippet=(
+                f"-- UC: {CONFIG.catalog}.{CONFIG.schema}.tenant_row_filter\n"
+                f"-- Function deployed once at setup, applied to every\n"
+                f"-- governed table via ALTER TABLE … SET ROW FILTER.\n"
                 "CREATE OR REPLACE FUNCTION tenant_row_filter(tenant_id STRING)\n"
-                "RETURN EXISTS (\n"
-                "  SELECT 1 FROM sp_tenant_mapping\n"
-                "  WHERE sp_app_id = session_user() AND active\n"
-                "    AND m.tenant_id = tenant_row_filter.tenant_id\n"
-                ");"
+                "RETURN\n"
+                f"  is_account_group_member('{CONFIG.admin_group}')\n"
+                "  OR EXISTS (\n"
+                "    SELECT 1\n"
+                "    FROM sp_tenant_mapping m\n"
+                "    WHERE m.sp_app_id = session_user()\n"
+                "      AND m.active = true\n"
+                "      AND m.tenant_id = tenant_row_filter.tenant_id\n"
+                "  );"
             ),
         )
 
-    # Step 5: Ask Genie
+    # Step 5: Ask Genie — POST to the Conversation API
     if insp is not None:
         with insp.step("Ask Genie") as step:
             resp = _client.ask(
@@ -142,11 +205,28 @@ def _ask_sync(
             )
             step.summary = (
                 f"Genie status={resp.status}; rows={len(resp.rows)}; "
-                f"cols={len(resp.columns)}"
+                f"cols={len(resp.columns)}; latency={resp.latency_ms} ms"
             )
             step.code_snippet = (
-                "POST /api/2.0/genie/spaces/{space_id}/start-conversation"
+                f"POST {workspace_host}/api/2.0/genie/spaces/{space_id}/start-conversation\n"
+                "Authorization: Bearer <jwt-from-step-3>\n\n"
+                "{\n"
+                f'  "content": "{question[:80]}{"…" if len(question) > 80 else ""}"\n'
+                "}\n"
+                "# Genie generates SQL → warehouse executes → row filter\n"
+                "# trims to this tenant's rows → response returns."
             )
+            step.payload_in = {
+                "space_id": space_id,
+                "content": question,
+                "conversation_id": conversation_id,
+            }
+            step.payload_out = {
+                "status": resp.status,
+                "row_count": len(resp.rows),
+                "column_count": len(resp.columns),
+                "sql": resp.sql,
+            }
     else:
         resp = _client.ask(
             space_id=space_id, question=question,
@@ -154,20 +234,39 @@ def _ask_sync(
             conversation_id=conversation_id, timeout_s=120,
         )
 
-    # Step 6: Audit (best-effort)
+    # Step 6: Audit (best-effort) — INSERT into audit_log
     if insp is not None:
         with insp.step("Audit") as step:
+            audit_status = 'ok' if resp.status == 'COMPLETED' else 'error'
             try:
                 _mgr()._audit(
                     'query', tenant.tenant_id, tenant.sp_app_id,
                     question=resp.question, latency_ms=resp.latency_ms,
-                    status='ok' if resp.status == 'COMPLETED' else 'error',
+                    status=audit_status,
                     detail=None if resp.status == 'COMPLETED' else f'genie_status={resp.status}',
                 )
-                step.summary = "audit_log row written"
-                step.code_snippet = "audit_repo.append(action='query', ...)"
+                step.summary = (
+                    f"audit_log row appended (action=query, status={audit_status}, "
+                    f"latency_ms={resp.latency_ms})"
+                )
+                step.code_snippet = (
+                    "-- Lakebase: " + lakebase + "\n"
+                    "INSERT INTO audit_log\n"
+                    "  (tenant_id, actor, action, sp_app_id, question,\n"
+                    "   status, latency_ms, detail)\n"
+                    "VALUES\n"
+                    "  (%s, %s, 'query', %s, %s,\n"
+                    "   %s, %s, %s);"
+                )
+                step.payload_in = {
+                    "tenant_id": tenant.tenant_id,
+                    "action": "query",
+                    "status": audit_status,
+                    "latency_ms": resp.latency_ms,
+                }
             except Exception as e:
                 step.summary = f"audit failed (non-fatal): {e}"
+                step.code_snippet = "-- Lakebase: " + lakebase
     else:
         try:
             _mgr()._audit(
