@@ -4,38 +4,38 @@
 
 The architecture uses a **two-layer authentication model** (following the Firefly SSO-SPN pattern):
 
-### Layer 1: Client Authentication (Your System)
+### Layer 1: Tenant Authentication (Your System)
 
-Clients authenticate against your proxy — never against Databricks.
+Tenants authenticate against your proxy — never against Databricks.
 
 | Method | Use Case | Implementation |
 |--------|----------|----------------|
-| API Keys | Server-to-server, backend clients | Hash with bcrypt, store in Lakebase |
-| OAuth 2.0 | Browser-based or mobile clients | Use your IdP (Okta, Auth0, Azure AD) |
-| mTLS | High-security / regulated clients | Client certificates for mutual auth |
+| API Keys | Server-to-server, backend tenants | Hash with bcrypt, store in Lakebase |
+| OAuth 2.0 | Browser-based or mobile tenants | Use your IdP (Okta, Auth0, Azure AD) |
+| mTLS | High-security / regulated tenants | Client certificates for mutual auth |
 
 ```python
 # API key validation example
 from passlib.hash import bcrypt
 
 async def verify_api_key(api_key: str) -> dict:
-    """Validate API key and return client record."""
+    """Validate API key and return tenant record."""
     # Query Lakebase for matching hash
-    client = await db.fetch_one(
+    tenant = await db.fetch_one(
         "SELECT * FROM client_registry WHERE api_key_hash = $1 AND active = true",
         bcrypt.hash(api_key)
     )
-    if not client:
+    if not tenant:
         raise HTTPException(status_code=401, detail="Invalid API key")
-    return client
+    return tenant
 ```
 
 ### Layer 2: Databricks Authentication (Service Principal)
 
-The proxy authenticates to Databricks using SP OAuth credentials. Clients never see these credentials.
+The proxy authenticates to Databricks using SP OAuth credentials. Tenants never see these credentials.
 
 **Pattern B (Custom Claims):** Single SP, `custom_claim` in token embeds tenant identity.
-**Pattern A (SP-per-Client):** Per-client SP, `session_user()` identifies the tenant.
+**Pattern A (SP-per-Tenant):** Per-tenant SP, `session_user()` identifies the tenant.
 
 ## Two-Tier SP Design
 
@@ -53,7 +53,7 @@ Used exclusively by provisioning scripts and admin operations:
 
 ### Data SP (Database Storage, Encrypted)
 
-Used for client-facing data access:
+Used for tenant-facing data access:
 - Execute SQL queries via Genie
 - Browse catalogs and schemas scoped by row filters
 - Cannot create catalogs, modify permissions, or access other tenants' data (enforced by UC)
@@ -65,14 +65,14 @@ Used for client-facing data access:
 ### In Transit
 
 All network paths use TLS 1.3:
-- Client → Proxy App
+- Tenant → Proxy App
 - Proxy App → Lakebase (PostgreSQL)
 - Proxy App → Databricks OIDC endpoint
 - Proxy App → Genie API
 
 ### At Rest
 
-SP credentials and tokens encrypted in Lakebase using AES-256-GCM:
+SP credentials are stored in Lakebase `sp_credentials`, AES-GCM encrypted at rest with a 32-byte key from `AES_KEY_BASE64`. Full implementation:
 
 ```python
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -107,8 +107,8 @@ Defense in depth — any single layer compromise does not expose other tenants' 
 
 | Layer | Mechanism | What It Prevents |
 |-------|-----------|------------------|
-| **1. Client Auth** | API key/OAuth validation in proxy | Unauthenticated access |
-| **2. Tenant Resolution** | Proxy maps client → tenant_id (immutable) | Tenant spoofing |
+| **1. Tenant Auth** | API key/OAuth validation in proxy | Unauthenticated access |
+| **2. Tenant Resolution** | Proxy maps tenant identity → tenant_id (immutable) | Tenant spoofing |
 | **3. Token Claims** | `custom_claim=<tenant_id>` embedded in JWT | Cross-tenant token reuse |
 | **4. Unity Catalog RLS** | `current_oauth_custom_identity_claims()` in row filters | Data leakage even if app layer is compromised |
 
@@ -118,9 +118,9 @@ Defense in depth — any single layer compromise does not expose other tenants' 
 
 | Role | Permissions | Use Case |
 |------|-------------|----------|
-| **Platform Admin** | Manage clients, view all data, configure Genie spaces | Your ops team |
-| **Client Admin** | Manage users within their tenant, view usage stats | Client's admin |
-| **Client User** | Query Genie, view results | End users |
+| **Platform Admin** | Manage tenants, view all data, configure Genie spaces | Your ops team |
+| **Tenant Admin** | Manage users within their tenant, view usage stats | Tenant's admin |
+| **Tenant User** | Query Genie, view results | End users |
 
 ### Unity Catalog Permissions
 
@@ -201,9 +201,9 @@ ORDER BY a.event_time;
 - [ ] TLS 1.3 on all network paths
 - [ ] Row filters applied to all tables with tenant data
 - [ ] Admin SP separated from data SP
-- [ ] Rate limiting per client in proxy
+- [ ] Rate limiting per tenant in proxy
 - [ ] Audit logging at all three levels
 - [ ] Token cache with proactive refresh (not on-demand expiry)
-- [ ] Client offboarding tested (deactivate + verify no data access)
+- [ ] Tenant offboarding tested (deactivate + verify no data access)
 - [ ] Quarterly key rotation procedure documented
 - [ ] Penetration test: verify cross-tenant isolation

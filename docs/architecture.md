@@ -12,8 +12,8 @@ External clients never interact with Databricks directly. A proxy application au
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    CLIENT TIER                           │
-│  Client A    Client B    Client C    ...    Client N    │
+│                    TENANT TIER                           │
+│  Tenant A    Tenant B    Tenant C    ...    Tenant N    │
 │  (API key)   (API key)   (API key)          (API key)   │
 └─────────┬───────┬───────┬───────────────────┬───────────┘
           │       │       │                   │
@@ -22,11 +22,11 @@ External clients never interact with Databricks directly. A proxy application au
 │              PROXY / GATEWAY APP                         │
 │  (FastAPI, Next.js, or Databricks App)                  │
 │                                                          │
-│  1. Authenticate client (API key / OAuth)                │
-│  2. Look up client → tenant_id in Lakebase registry      │
+│  1. Authenticate tenant (API key / OAuth)                │
+│  2. Look up tenant → tenant_id in Lakebase registry      │
 │  3. Request SP token WITH custom_claim=<tenant_id>       │
 │  4. Call Genie Conversation API with claims-bearing token │
-│  5. Return results to client                             │
+│  5. Return results to tenant                             │
 │  6. Write audit log                                      │
 └──────┬──────────┬───────────────────┬───────────────────┘
        │          │                   │
@@ -35,7 +35,7 @@ External clients never interact with Databricks directly. A proxy application au
 │ Lakebase │ │ Databricks │ │     DATABRICKS WORKSPACE     │
 │ (Postgres)│ │   OIDC     │ │                              │
 │          │ │  Endpoint   │ │  Genie Space                 │
-│ • Client │ │             │ │    ↓                         │
+│ • Tenant │ │             │ │    ↓                         │
 │   Registry│ │ POST /token│ │  Serverless SQL Warehouse    │
 │ • SP Creds│ │ + custom   │ │    ↓                         │
 │   (AES256)│ │   _claim   │ │  Unity Catalog               │
@@ -51,9 +51,9 @@ External clients never interact with Databricks directly. A proxy application au
 
 ## Components
 
-### 1. Client Tier
+### 1. Tenant Tier
 
-External clients (thousands) that consume analytics via API. Each client:
+External tenants (thousands) that consume analytics via API. Each tenant:
 - Authenticates with an API key or OAuth token issued by **your** identity system (not Databricks)
 - Sends natural language questions to your proxy endpoint
 - Receives structured answers (text, SQL, data rows)
@@ -62,28 +62,38 @@ External clients (thousands) that consume analytics via API. Each client:
 ### 2. Proxy / Gateway App
 
 The central orchestration layer. Responsibilities:
-- **Client authentication** — validate API keys against Lakebase registry
-- **Tenant resolution** — map authenticated client to a `tenant_id`
+- **Tenant authentication** — validate API keys against Lakebase registry
+- **Tenant resolution** — map authenticated tenant to a `tenant_id`
 - **Token exchange** — request a Databricks OAuth token for the shared SP with `custom_claim=<tenant_id>`
 - **Token caching** — cache tokens per tenant (1hr lifetime, refresh at 55min)
 - **Genie proxying** — forward questions to the Genie Conversation API, poll for completion, return results
-- **Rate limiting** — enforce per-client and global rate limits (Genie: 5 questions/min/workspace)
-- **Audit logging** — record every request with client identity, question, latency, status
+- **Rate limiting** — enforce per-tenant and global rate limits (Genie: 5 questions/min/workspace)
+- **Audit logging** — record every request with tenant identity, question, latency, status
 
 Technology options:
 - **FastAPI** (Python) — lightweight, async, good Databricks SDK integration
 - **Next.js** (TypeScript) — if you want a UI as well (Firefly pattern)
 - **Databricks App** — deployed on Databricks, automatic OAuth, simplified networking
 
-### 3. Lakebase (PostgreSQL)
+### 3. Lakebase (PostgreSQL) — Metadata Store
 
-Persistent storage for the proxy app. Tables:
-- `client_registry` — tenant_id, API key hash, tier, active status
-- `sp_credentials` — encrypted SP client_id/secret (AES-256-GCM)
-- `token_cache` — cached access tokens per tenant with expiry
+Persistent storage for the proxy app. Lakebase auto-scales the underlying compute and is the single source of truth for proxy-operational data:
+- `client_registry` — tenant_id, API key hash, tier, active status, optional `genie_space_id` override
+- `sp_credentials` — encrypted SP client_id/secret (AES-256-GCM, key from `AES_KEY_BASE64`)
+- `token_cache` — cached access tokens per tenant with expiry (sharable across proxy replicas)
 - `audit_log` — every query with tenant, question, status, latency
 
+### 3b. Unity Catalog Delta — Governed Data Store
+
+The customer analytics data lives in UC, **not** in Lakebase:
+- `bookings`, `customers` — base Delta tables with tenant row filters applied
+- `sp_tenant_mapping` — maps SP application_id → tenant_id (joined in the UC row filter)
+
+This split means the proxy's operational data (Lakebase) is fully isolated from the governed analytics data (UC Delta). Rotate or swap one without touching the other.
+
 See [Implementation Guide](implementation-guide.md) for full schema.
+
+> The live architecture diagram is rendered in the app's Architecture tab. The Mermaid source is in [web/src/pages/ArchitecturePage.tsx](../web/src/pages/ArchitecturePage.tsx) (search for `ARCH_DIAGRAM`).
 
 ### 4. Databricks OIDC Token Endpoint
 
@@ -136,7 +146,7 @@ Row filters are preferred because Genie sees the original table name (better NL 
 ## Data Flow — Single Request
 
 ```
-1. Client sends: POST /api/v1/ask { "question": "Top 10 orders last month" }
+1. Tenant sends: POST /api/v1/ask { "question": "Top 10 orders last month" }
 2. Proxy validates API key → resolves tenant_id = "acme-corp"
 3. Proxy checks token cache for "acme-corp"
    - Cache miss: POST /oidc/v1/token with custom_claim=acme-corp → cache token
@@ -148,10 +158,10 @@ Row filters are preferred because Genie sees the original table name (better NL 
 6. SQL Warehouse executes query
 7. Unity Catalog evaluates row filter: tenant_id = "acme-corp" (from JWT claim)
    → Only acme-corp's orders are returned
-8. Proxy returns results to client
+8. Proxy returns results to tenant
 9. Proxy writes audit log: { tenant: "acme-corp", question: "...", latency: 3200ms }
 ```
 
 ## Diagram
 
-![Architecture Diagram](../diagrams/multi-tenant-genie-architecture.png)
+The live architecture diagram is rendered in the app's Architecture tab. The Mermaid source is in [web/src/pages/ArchitecturePage.tsx](../web/src/pages/ArchitecturePage.tsx) (search for `ARCH_DIAGRAM`).

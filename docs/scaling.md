@@ -27,7 +27,7 @@ For >5,000 tenants, parallelize across multiple account-API hosts (uncommon) or 
 
 ### Bulk Onboarding Script
 
-[`src/scripts/bulk_onboard.py`](../src/scripts/bulk_onboard.py) implements the rate-limit-aware pattern:
+[`scripts/bulk_onboard.py`](../scripts/bulk_onboard.py) implements the rate-limit-aware pattern:
 - Default `--workers 5` matches the POST budget
 - 429s retried with exponential backoff (1s → 2s → 4s → 8s + jitter)
 - Idempotent: existing `tenant_id`s are skipped
@@ -36,13 +36,13 @@ For >5,000 tenants, parallelize across multiple account-API hosts (uncommon) or 
 
 ```bash
 # Dry-run plan
-python -m src.scripts.bulk_onboard --count 500 --dry-run
+python -m scripts.bulk_onboard --count 500 --dry-run
 
 # Real run from CSV
-python -m src.scripts.bulk_onboard --input tenants.csv --workers 5
+python -m scripts.bulk_onboard --input tenants.csv --workers 5
 
 # Tighter concurrency for shared-account environments
-python -m src.scripts.bulk_onboard --input tenants.csv --workers 3 --chunk 25
+python -m scripts.bulk_onboard --input tenants.csv --workers 3 --chunk 25
 ```
 
 ## Genie API Limits
@@ -56,7 +56,7 @@ python -m src.scripts.bulk_onboard --input tenants.csv --workers 3 --chunk 25
 
 ### Implications at Scale
 
-With 5 questions/min/workspace and thousands of clients:
+With 5 questions/min/workspace and thousands of tenants:
 - **1 workspace** → 300 questions/hour → ~7,200/day
 - **5 workspaces** → 1,500 questions/hour → ~36,000/day
 - **10 workspaces** → 3,000 questions/hour → ~72,000/day
@@ -98,7 +98,7 @@ import asyncio
 from enum import IntEnum
 
 class Priority(IntEnum):
-    HIGH = 1      # Paid tier clients
+    HIGH = 1      # Paid tier tenants
     STANDARD = 2  # Standard tier
     LOW = 3       # Free tier / internal
 
@@ -140,7 +140,7 @@ Genie spaces have a 10,000 conversation limit. At scale:
 - **Monitor** conversation count via the Genie API
 - **Archive/rotate** spaces when approaching the limit
 - **Multiple spaces** for different analytics domains (reduces per-space load)
-- **Reuse conversations** for follow-up questions from the same client session
+- **Reuse conversations** for follow-up questions from the same tenant session
 
 ## Token Caching
 
@@ -157,9 +157,9 @@ OAuth tokens last 1 hour. Caching avoids redundant OIDC calls:
 # See implementation-guide.md for TokenMinter setup
 ```
 
-## Per-Client Rate Limiting
+## Per-Tenant Rate Limiting
 
-Enforce limits in the proxy to prevent a single client from consuming all Genie capacity:
+Enforce limits in the proxy to prevent a single tenant from consuming all Genie capacity:
 
 ```python
 from collections import defaultdict
@@ -179,20 +179,20 @@ class ClientRateLimiter:
         return True
 ```
 
-Client tiers:
+Tenant tiers:
 
 | Tier | Rate Limit | Use Case |
 |------|-----------|----------|
-| Enterprise | 10/min | High-value clients with SLAs |
-| Standard | 3/min | Most clients |
-| Basic | 1/min | Low-usage / trial clients |
+| Enterprise | 10/min | High-value tenants with SLAs |
+| Standard | 3/min | Most tenants |
+| Basic | 1/min | Low-usage / trial tenants |
 
 ## Cost Management
 
 ### Compute Attribution
 
 - **Pattern B (single SP):** All queries attributed to one SP in system tables. Use app-level audit logs for per-tenant cost allocation.
-- **Pattern A (SP-per-client):** Each SP's compute is separately visible in `system.billing.usage` and `system.access.audit`.
+- **Pattern A (SP-per-tenant):** Each SP's compute is separately visible in `system.billing.usage` and `system.access.audit`.
 
 ### Serverless SQL Cost
 
@@ -207,3 +207,21 @@ Genie uses a SQL warehouse. Serverless pricing is per-query:
 - Cache responses aggressively for repeated questions
 - Set `auto_stop_mins` on non-serverless warehouses
 - Monitor `system.billing.usage` for cost trends
+
+## Scaling beyond a single Genie Space
+
+Each Genie Space currently caps at ~10,000 conversations. For deployments exceeding that:
+
+- The data model accommodates per-tenant overrides via `client_registry.genie_space_id` (nullable; null → workspace global).
+- Surface a Genie space picker in the Admin tab when you need it. See [docs/future-directions.md](future-directions.md#multi-genie-space-ui) for the localized change list.
+- Operationally: split tenants across spaces by tier, region, or vertical. Each space gets its own tuning + content.
+
+## Lakebase scaling
+
+The metadata store (`client_registry`, `sp_credentials`, `audit_log`) is single-Postgres-instance. Lakebase auto-scales the underlying compute; for the reference workload (read on every request, write on every onboard / query), a base instance handles thousands of tenants.
+
+Hot paths:
+- Tenant lookup on `/api/genie/ask`: indexed `client_registry.tenant_id`.
+- Audit append: append-only writes to `audit_log`, indexed on `(tenant_id, created_at DESC)`.
+
+For multi-instance proxy deployments, the in-memory token cache (`TokenMinter`) becomes a per-replica cache — the `token_cache` Postgres table can be enabled to share token state across replicas. Schema is in place; the cache reader is not yet wired.

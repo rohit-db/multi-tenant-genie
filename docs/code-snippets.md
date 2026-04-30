@@ -3,7 +3,7 @@
 Lift-and-use code examples for the moving pieces of the architecture. Every snippet here is pulled from working code in this repo — links to the canonical source file are included so you can read the full context.
 
 **Pattern note:** snippets that depend on identity propagation come in two flavors:
-- **Pattern A — SP-per-client** (uses `session_user()`). Working today on any Databricks workspace. Shown by default.
+- **Pattern A — SP-per-tenant** (uses `session_user()`). Working today on any Databricks workspace. Shown by default.
 - **Pattern B — Shared SP + custom claims** (uses `current_oauth_custom_identity_claims()`). Pending Genie surface validation; shown where it differs.
 
 ---
@@ -66,7 +66,7 @@ data = {
 
 The returned JWT carries the claim; UC reads it at query time via `current_oauth_custom_identity_claims()`.
 
-Source: [`src/lib/token_minter.py`](../src/lib/token_minter.py)
+Source: [`server/lib/token_minter.py`](../server/lib/token_minter.py)
 
 ### 1.2 Initializing the Databricks SDK from a profile
 
@@ -131,7 +131,7 @@ w.statement_execution.execute_statement(
 
 For account-level SPs (preferred in production so the same identity works across workspaces), use `AccountClient(...).service_principals` instead — the API surface is identical.
 
-Source: [`src/lib/sp_manager.py`](../src/lib/sp_manager.py)
+Source: [`server/lib/sp_manager.py`](../server/lib/sp_manager.py)
 
 ### 2.2 Rotate an SP's OAuth secret
 
@@ -160,7 +160,7 @@ for s in existing:
 
 For true zero-downtime overlap, hold both secrets active for a window (e.g. 5 min) so any caller still using the old credentials migrates successfully.
 
-Source: [`src/lib/sp_manager.py`](../src/lib/sp_manager.py)
+Source: [`server/lib/sp_manager.py`](../server/lib/sp_manager.py)
 
 ### 2.3 Deactivate a tenant
 
@@ -198,7 +198,7 @@ w.statement_execution.execute_statement(
 
 **Caveat:** JWTs already issued before deactivation remain valid until their natural TTL (~1h). The mapping `active=false` flip is what stops them from returning rows, not the secret deletion. The secret deletion only prevents new tokens.
 
-Source: [`src/lib/sp_manager.py`](../src/lib/sp_manager.py)
+Source: [`server/lib/sp_manager.py`](../server/lib/sp_manager.py)
 
 ### 2.4 Bulk onboarding at scale
 
@@ -253,13 +253,13 @@ Wall-time expectations (5 workers, no 429s):
 | 1,000 | 8–15 min |
 | 4,000 | 30–60 min |
 
-Source: [`src/scripts/bulk_onboard.py`](../src/scripts/bulk_onboard.py) — production-style script with dry-run, per-tenant outcome JSON, and progress reporting.
+Source: [`scripts/bulk_onboard.py`](../scripts/bulk_onboard.py) — production-style script with dry-run, per-tenant outcome JSON, and progress reporting.
 
 ---
 
 ## 3. Unity Catalog — Row-Level Security
 
-### 3.1 Row filter — Pattern A (SP-per-client, `session_user()`)
+### 3.1 Row filter — Pattern A (SP-per-tenant, `session_user()`)
 
 The filter joins to a mapping table by the SP's `application_id` (which `session_user()` returns when the caller authenticated via OAuth M2M).
 
@@ -281,7 +281,7 @@ ALTER TABLE main.analytics.bookings
 
 The `tenant_row_filter.tenant_id` reference inside `EXISTS` disambiguates the function parameter from the column being filtered.
 
-Source: [`sql/setup.sql`](../sql/setup.sql)
+Source: [`sql/lakebase/V001__initial.sql`](../sql/lakebase/V001__initial.sql)
 
 ### 3.2 Row filter — Pattern B (shared SP, custom claims)
 
@@ -322,7 +322,7 @@ for sp_app_id in tenant_sp_app_ids:
 
 In Pattern B, only the shared SP needs grants — far simpler.
 
-Source: [`src/lib/sp_manager.py`](../src/lib/sp_manager.py)
+Source: [`server/lib/sp_manager.py`](../server/lib/sp_manager.py)
 
 ### 3.4 Schema for the SP→tenant mapping table
 
@@ -337,7 +337,7 @@ COMMENT 'Lookup table joined in the tenant row filter';
 
 Keep this minimal — every row-filter evaluation joins it. Multi-tenant fan-out (one SP serving multiple tenants) is supported by inserting multiple rows.
 
-Source: [`sql/setup.sql`](../sql/setup.sql)
+Source: [`sql/lakebase/V001__initial.sql`](../sql/lakebase/V001__initial.sql)
 
 ---
 
@@ -365,7 +365,7 @@ r.raise_for_status()
 
 `PATCH` adds to the ACL; `PUT` replaces it. Use `PATCH` when onboarding incrementally.
 
-Source: [`src/lib/sp_manager.py`](../src/lib/sp_manager.py)
+Source: [`server/lib/sp_manager.py`](../server/lib/sp_manager.py)
 
 ### 4.2 Ask Genie a question end-to-end (start, poll, fetch result)
 
@@ -445,7 +445,7 @@ def ask(token: str, question: str, conversation_id: str | None = None) -> dict:
 
 **Rate limit:** Genie enforces ~5 questions/min per workspace. For high-fan-out use cases (isolation sweeps, multi-tenant batch), throttle calls or distribute across workspaces.
 
-Source: [`src/lib/genie_client.py`](../src/lib/genie_client.py)
+Source: [`server/lib/genie_client.py`](../server/lib/genie_client.py)
 
 ### 4.3 Identify which SP a token represents
 
@@ -461,7 +461,7 @@ r.raise_for_status()
 print(r.json())  # contains application_id, display_name, etc.
 ```
 
-Source: [`src/lib/genie_client.py`](../src/lib/genie_client.py)
+Source: [`server/lib/genie_client.py`](../server/lib/genie_client.py)
 
 ---
 
@@ -483,7 +483,7 @@ CREATE TABLE main.analytics.audit_log (
 ) USING DELTA;
 ```
 
-Source: [`sql/setup.sql`](../sql/setup.sql)
+Source: [`sql/lakebase/V001__initial.sql`](../sql/lakebase/V001__initial.sql)
 
 ### 5.2 Insert an audit row from the proxy
 
@@ -515,7 +515,7 @@ def audit(action: str, tenant_id: str, sp_app_id: str, *,
 
 **Production note:** the string interpolation here is fine for a sandbox demo but should be replaced with parameterized statements or a Lakebase append for high-volume audit ingestion.
 
-Source: [`src/lib/sp_manager.py`](../src/lib/sp_manager.py)
+Source: [`server/lib/sp_manager.py`](../server/lib/sp_manager.py)
 
 ### 5.3 Useful audit queries
 
@@ -589,4 +589,4 @@ The pieces:
 5. **Genie call** with the per-tenant token. UC's row filter handles isolation.
 6. **Audit** captures every request — same code path on success and failure.
 
-The customer never knows about Databricks. Onboarding a new tenant = create SP + register mapping (Pattern A) or just add a row to your client registry (Pattern B).
+The tenant never knows about Databricks. Onboarding a new tenant = create SP + register mapping (Pattern A) or just add a row to your tenant registry (Pattern B).
