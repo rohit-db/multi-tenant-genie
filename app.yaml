@@ -1,0 +1,78 @@
+# Databricks App manifest for multi-tenant-genie.
+#
+# Deploy via:
+#   databricks apps create multi-tenant-genie
+#   databricks apps deploy multi-tenant-genie --source-code-path /path/to/repo
+#
+# See docs/deploy.md for the full deploy walkthrough.
+
+name: multi-tenant-genie
+description: |
+  A reference solution for delivering Databricks Genie to thousands of
+  isolated tenants. One Service Principal per tenant; UC row filters
+  enforce data isolation; Lakebase holds operational metadata.
+
+# Resources Databricks Apps provisions for the app at deploy time.
+# Each one becomes an env var the runtime sees.
+resources:
+  - name: lakebase
+    description: Postgres-backed metadata store (client_registry, sp_credentials, audit_log).
+    database:
+      instance_name: multi-tenant-genie-db
+      database_name: mtg
+      permission: CAN_USE
+
+  - name: warehouse
+    description: SQL warehouse Genie + the proxy use for UC reads/writes.
+    sql_warehouse:
+      id: ${var.warehouse_id}
+      permission: CAN_USE
+
+  - name: genie_space
+    description: The Genie Space tenants ask questions against.
+    genie_space:
+      id: ${var.genie_space_id}
+      permission: CAN_RUN
+
+  - name: aes_key
+    description: AES-GCM key for encrypting SP credentials at rest.
+    secret:
+      scope: ${var.secret_scope}
+      key: aes_key_base64
+      permission: READ
+
+# Env vars exposed to the runtime. The Apps platform injects values
+# from the resources above, plus any literal values you set here.
+env:
+  - name: DATABASE_URL
+    valueFrom: lakebase
+  - name: WAREHOUSE_ID
+    valueFrom: warehouse
+  - name: GENIE_SPACE_ID
+    valueFrom: genie_space
+  - name: AES_KEY_BASE64
+    valueFrom: aes_key
+  # Workspace-scoped values — set via the Apps deploy command's --variable
+  # flags or the workspace's app config UI.
+  - name: MT_GENIE_HOST
+    value: ${var.host}
+  - name: MT_GENIE_CATALOG
+    value: ${var.catalog}
+  - name: MT_GENIE_SCHEMA
+    value: ${var.schema}
+  - name: MT_GENIE_SPACE_ID
+    value: ${var.genie_space_id}
+  - name: MT_GENIE_ADMIN_GROUP
+    value: ${var.admin_group}
+  - name: DOMAIN
+    value: ${var.domain}
+
+# How the platform runs the app. The proxy serves the FastAPI backend
+# on port 8000; Apps fronts it on its own URL.
+command:
+  - "uvicorn"
+  - "server.app:app"
+  - "--host"
+  - "0.0.0.0"
+  - "--port"
+  - "8000"
