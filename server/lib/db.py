@@ -1,9 +1,14 @@
 """Postgres connection + idempotent migration runner.
 
-In production (Databricks Apps), the Lakebase resource block injects
-``DATABASE_URL`` as an env var. In local dev, ``docker-compose up -d``
-provides a Postgres on :5432 and the developer points ``DATABASE_URL``
-at it (default in ``.env.local``).
+Two modes:
+
+* **Databricks Apps (production)** — Apps injects ``PGHOST``/``PGPORT``/
+  ``PGDATABASE``/``PGUSER`` from a bound Lakebase resource. Lakebase auth
+  is OAuth — the password is a fresh OAuth token from the workspace's
+  service principal, minted at connect time.
+
+* **Local dev** — ``DATABASE_URL`` points at a Postgres container
+  (typically ``postgresql://postgres:postgres@localhost:5432/mtg``).
 
 Migrations live under ``sql/lakebase/`` as ``V<NNN>__<name>.sql`` files
 and are applied in lexicographic order. Applied versions are tracked in
@@ -16,19 +21,53 @@ import os
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
+from urllib.parse import quote_plus
 
 import psycopg
 
 logger = logging.getLogger(__name__)
 
 
+def _databricks_oauth_token() -> str:
+    """Mint a fresh OAuth token from the workspace SP for Lakebase auth."""
+    from databricks.sdk import WorkspaceClient
+
+    w = WorkspaceClient()
+    auth = w.config.authenticate()
+    if auth and "Authorization" in auth:
+        return auth["Authorization"].replace("Bearer ", "")
+    raise RuntimeError(
+        "Could not get OAuth token from WorkspaceClient. Apps mode requires "
+        "the app SP's identity to be available."
+    )
+
+
 def database_url() -> str:
-    """Return the DATABASE_URL env var, raising if unset."""
+    """Return a Postgres connection URL.
+
+    Apps mode (PGHOST set): builds a URL with PG* env vars + a fresh OAuth
+    token as the password. Token is minted on every call — fine for the
+    request load this app handles; for higher load, cache + refresh.
+
+    Local-dev mode (DATABASE_URL set): returns it as-is.
+    """
+    pg_host = os.environ.get("PGHOST")
+    if pg_host:
+        token = _databricks_oauth_token()
+        pg_port = os.environ.get("PGPORT", "5432")
+        pg_db = os.environ.get("PGDATABASE", "mtg")
+        pg_user = os.environ.get("PGUSER", "")
+        return (
+            f"postgresql://{quote_plus(pg_user)}:{quote_plus(token)}"
+            f"@{pg_host}:{pg_port}/{pg_db}?sslmode=require"
+        )
+
     url = os.environ.get("DATABASE_URL")
     if not url:
         raise RuntimeError(
-            "DATABASE_URL is not set. In local dev, run "
-            "`docker compose up -d` and `export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/mtg`."
+            "Neither PGHOST (Apps mode) nor DATABASE_URL (local-dev mode) is set. "
+            "In local dev, run `docker compose up -d` and "
+            "`export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/mtg`."
         )
     return url
 
