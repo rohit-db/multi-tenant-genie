@@ -36,7 +36,7 @@ run()  { if [ "${DRY_RUN:-0}" = 1 ]; then echo "+ $*" >&2; else "$@"; fi; }
 require_cmd() { command -v "$1" >/dev/null 2>&1 || die "Missing prerequisite: $1"; }
 
 # -------------------------------------------------------------- prereqs
-log "Checking prerequisites…"
+log "Checking prerequisites..."
 require_cmd databricks
 require_cmd jq
 require_cmd python3
@@ -114,8 +114,8 @@ else
 fi
 
 # -------------------------------------------------------------- AES key
-log "Ensuring secret scope $SECRET_SCOPE + AES key…"
-if databricks secrets list-scopes -p "$PROFILE" 2>/dev/null \
+log "Ensuring secret scope $SECRET_SCOPE + AES key..."
+if databricks secrets list-scopes -p "$PROFILE" -o json 2>/dev/null \
      | jq -e --arg n "$SECRET_SCOPE" '.[] | select(.name == $n)' >/dev/null; then
   ok "Secret scope exists"
 else
@@ -134,8 +134,8 @@ else
 fi
 
 # -------------------------------------------------------------- Lakebase
-log "Ensuring Lakebase instance $LAKEBASE_INSTANCE…"
-if databricks database list-database-instances -p "$PROFILE" 2>/dev/null \
+log "Ensuring Lakebase instance $LAKEBASE_INSTANCE..."
+if databricks database list-database-instances -p "$PROFILE" -o json 2>/dev/null \
      | jq -e --arg n "$LAKEBASE_INSTANCE" '.[] | select(.name == $n)' >/dev/null; then
   ok "Lakebase instance exists"
 else
@@ -146,7 +146,7 @@ else
 fi
 
 # -------------------------------------------------------------- App
-log "Ensuring app $APP_NAME…"
+log "Ensuring app $APP_NAME..."
 if databricks apps get "$APP_NAME" -p "$PROFILE" >/dev/null 2>&1; then
   ok "App exists"
 else
@@ -164,7 +164,7 @@ APP_URL="$(echo "$APP_INFO" | jq -r '.url')"
 log "App SP: $APP_SP_APP_ID (db_id=$APP_SP_DB_ID)"
 
 # -------------------------------------------------------------- Sync source
-log "Syncing source to $WORKSPACE_PATH…"
+log "Syncing source to $WORKSPACE_PATH..."
 run databricks sync . "$WORKSPACE_PATH" \
   --exclude node_modules --exclude .venv --exclude __pycache__ --exclude .git \
   --exclude "web/src" --exclude "web/node_modules" --exclude .superpowers \
@@ -175,14 +175,14 @@ ok "Source synced"
 # -------------------------------------------------------------- First deploy
 # Deploy without resources so the app SP exists in a recognized state.
 # Lifespan logs a warning + skips migrations when DB env isn't bound yet.
-log "First deploy (no resources bound yet — app boots, DB skipped)…"
+log "First deploy (no resources bound yet — app boots, DB skipped)..."
 run databricks apps deploy "$APP_NAME" \
   --source-code-path "$WORKSPACE_PATH" \
   -p "$PROFILE" >/dev/null || warn "First deploy returned non-zero (often OK)"
 ok "First deploy complete"
 
 # -------------------------------------------------------------- Bind resources
-log "Binding Lakebase + AES key resources…"
+log "Binding Lakebase + AES key resources..."
 RESOURCES_JSON=$(cat <<EOF
 {
   "resources": [
@@ -212,7 +212,7 @@ run databricks apps update "$APP_NAME" --json "$RESOURCES_JSON" -p "$PROFILE" >/
 ok "Resources bound"
 
 # -------------------------------------------------------------- Add to admins
-log "Adding app SP to '$ADMIN_GROUP' group (for SCIM SP-create permission)…"
+log "Adding app SP to '$ADMIN_GROUP' group (for SCIM SP-create permission)..."
 ADMIN_GROUP_ID="$(databricks groups list -p "$PROFILE" 2>/dev/null \
                   | awk -v g="$ADMIN_GROUP" '$2==g {print $1; exit}')"
 if [ -z "$ADMIN_GROUP_ID" ]; then
@@ -234,7 +234,7 @@ EOF
 fi
 
 # -------------------------------------------------------------- Lakebase grants
-log "Granting Lakebase schema permissions to app SP…"
+log "Granting Lakebase schema permissions to app SP..."
 # Wait briefly for the role to be created by the resource binding.
 for i in 1 2 3 4 5; do
   if databricks psql "$LAKEBASE_INSTANCE" -p "$PROFILE" -- \
@@ -243,7 +243,7 @@ for i in 1 2 3 4 5; do
        | grep -q '1 row'; then
     break
   fi
-  warn "Waiting for app SP role in Lakebase (attempt $i/5)…"
+  warn "Waiting for app SP role in Lakebase (attempt $i/5)..."
   sleep 3
 done
 
@@ -256,7 +256,7 @@ fi
 ok "Lakebase schema grants applied"
 
 # -------------------------------------------------------------- UC grants
-log "Granting UC permissions on $CATALOG.$SCHEMA to app SP…"
+log "Granting UC permissions on $CATALOG.$SCHEMA to app SP..."
 GRANT_SQL=(
   "GRANT USE CATALOG ON CATALOG $CATALOG TO \`$APP_SP_APP_ID\`"
   "GRANT USE SCHEMA ON SCHEMA $CATALOG.$SCHEMA TO \`$APP_SP_APP_ID\`"
@@ -278,7 +278,7 @@ done
 ok "UC grants applied"
 
 # -------------------------------------------------------------- Final deploy
-log "Redeploy to pick up bound resources…"
+log "Redeploy to pick up bound resources..."
 run databricks apps deploy "$APP_NAME" \
   --source-code-path "$WORKSPACE_PATH" \
   -p "$PROFILE" >/dev/null
