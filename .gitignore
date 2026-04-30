@@ -10,6 +10,8 @@ venv/
 node_modules/
 dist/
 build/
+# Except web/build — bundled frontend ships with the Databricks Apps deploy.
+!web/build/
 *.log
 .parcel-cache/
 
