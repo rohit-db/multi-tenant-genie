@@ -215,21 +215,63 @@ function Dashboard({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_400px] gap-5">
-        <div className="space-y-5 min-w-0">
-          <KpiRow kpis={kpis} />
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-            <RoutesCard data={routes} />
-            <CabinMixCard data={cabin} />
-          </div>
-          <MonthlyTrendCard data={trend} />
-          <SuppliersCard data={suppliers} />
-          <InsightsAgentCard tenant={tenant} />
+        <div className="space-y-6 min-w-0">
+          <section className="space-y-3">
+            <SectionLabel
+              kicker="Live data"
+              hint="Direct SQL through the tenant SP — UC row filter applies."
+            />
+            <KpiRow kpis={kpis} />
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+              <RoutesCard data={routes} />
+              <CabinMixCard data={cabin} />
+            </div>
+            <MonthlyTrendCard data={trend} />
+            <SuppliersCard data={suppliers} />
+          </section>
+
+          <section className="space-y-3">
+            <SectionLabel
+              kicker="AI"
+              hint="Custom agent reasons over the same tenant-scoped data."
+              accent="violet"
+            />
+            <InsightsAgentCard tenant={tenant} />
+          </section>
         </div>
         <div className="lg:sticky lg:top-20 lg:self-start min-w-0">
           <ChatPanel tenant={tenant} />
         </div>
       </div>
     </>
+  );
+}
+
+function SectionLabel({
+  kicker,
+  hint,
+  accent = "slate",
+}: {
+  kicker: string;
+  hint?: string;
+  accent?: "slate" | "violet";
+}) {
+  const dot =
+    accent === "violet"
+      ? "bg-violet-500"
+      : "bg-slate-400";
+  return (
+    <div className="flex items-baseline gap-3">
+      <div className="flex items-center gap-2">
+        <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
+        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-700">
+          {kicker}
+        </span>
+      </div>
+      {hint && (
+        <span className="text-xs text-slate-500 truncate">{hint}</span>
+      )}
+    </div>
   );
 }
 
@@ -583,17 +625,20 @@ function InsightsAgentCard({ tenant }: { tenant: Tenant }) {
   }, [tenant.tenant_id]);
 
   return (
-    <Card>
-      <CardHeader>
+    <Card className="border-violet-200/70 shadow-sm overflow-hidden">
+      <div className="h-1 bg-gradient-to-r from-violet-500 via-fuchsia-500 to-indigo-500" />
+      <CardHeader className="bg-gradient-to-br from-violet-50/40 via-white to-white">
         <CardTitle className="text-base flex items-center gap-2">
-          <Wand2 className="h-4 w-4 text-violet-600" />
-          Insights agent
+          <span className="h-7 w-7 rounded-md bg-violet-100 flex items-center justify-center">
+            <Wand2 className="h-3.5 w-3.5 text-violet-700" />
+          </span>
+          Travel insights agent
         </CardTitle>
         <CardDescription>
-          Custom agent: LLM picks SQL queries, runs them as{" "}
-          <span className="font-medium">{tenant.tenant_name}</span> (row filter
-          applies), and synthesizes a recommendation. Same isolation pattern
-          Genie uses — applied to any agent.
+          Plans 2-3 SQL queries via Foundation Model API, runs each as{" "}
+          <span className="font-medium">{tenant.tenant_name}</span> (row
+          filter applies), and synthesizes a recommendation. The same
+          tenant-scoped token Genie uses — applied to any custom agent.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

@@ -116,30 +116,39 @@ const ARCH_DIAGRAM = `graph LR
 
   subgraph Proxy[Multi-Tenant Genie Proxy]
     API[FastAPI router]
+    Agent[Custom agents<br/>plan → tool → synth]
     Inspector[Request inspector]
-    LB[(Lakebase<br/>client_registry,<br/>sp_credentials,<br/>audit_log)]
+    LB[(Lakebase<br/>client_registry<br/>sp_credentials<br/>audit_log)]
     Mint[OAuth M2M minter]
   end
 
   subgraph DBX[Databricks Workspace]
-    SP[Per-tenant Service Principals]
-    UC[(UC Delta:<br/>bookings, customers,<br/>sp_tenant_mapping)]
-    RowFilter[Row filter:<br/>session_user → tenant_id]
-    Genie[Genie Space]
+    SP[Per-tenant<br/>Service Principals]
+    Genie[Genie<br/>Conversation API]
+    FM[Foundation Models<br/>Claude Sonnet]
+    UC[(UC Delta + row filter:<br/>session_user → tenant_id)]
   end
 
-  UI -->|POST /api/genie/ask| API
-  API -->|lookup| LB
-  API -->|mint token| Mint
-  Mint -->|OAuth client_credentials| SP
-  SP -->|Genie API| Genie
-  Genie -->|SQL on bookings| UC
-  UC -->|filtered rows| RowFilter
-  RowFilter -->|enforces session_user → tenant_id| UC
-  Genie -->|results| API
-  API -->|audit| LB
-  API -->|inspector payload| Inspector
-  Inspector -->|JSON| UI
+  UI -->|/api/genie/ask| API
+  UI -->|/api/agent/insights| API
+  UI -->|/api/genie/sql| API
+
+  API -->|tenant lookup| LB
+  API -->|mint OAuth M2M| Mint
+  Mint -.->|client_credentials| SP
+
+  API -->|as tenant SP| Genie
+  Genie -->|SQL| UC
+
+  API --> Agent
+  Agent -->|plan + synth| FM
+  Agent -->|tool calls<br/>as tenant SP| API
+
+  API -->|direct SQL<br/>as tenant SP| UC
+
+  UC -.->|tenant-filtered rows| API
+  API -->|audit row| LB
+  API -.->|inspector payload| Inspector
   API -->|response| UI
 `;
 
@@ -194,13 +203,38 @@ ALTER TABLE ${ws.data.catalog}.${ws.data.schema_name}.bookings
             System architecture
           </CardTitle>
           <CardDescription>
-            End-to-end component map: Lakebase as operational store, per-tenant
-            Service Principals, and UC row-filter enforcement.
+            Three call paths from the tenant — Genie (natural language),
+            direct SQL (deterministic dashboard widgets), and custom agents
+            (LLM-driven plan / tool / synth) — all use the same per-tenant
+            OAuth M2M token, so the UC row filter applies uniformly.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="rounded-md border bg-white p-4 overflow-auto">
             <Mermaid chart={ARCH_DIAGRAM} />
+          </div>
+          <div className="mt-4 grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
+            <div className="rounded-md border bg-slate-50/60 px-3 py-2">
+              <div className="font-medium text-slate-900 mb-0.5">
+                /api/genie/ask
+              </div>
+              Natural-language question → Genie generates SQL → UC enforces
+              row filter.
+            </div>
+            <div className="rounded-md border bg-slate-50/60 px-3 py-2">
+              <div className="font-medium text-slate-900 mb-0.5">
+                /api/genie/sql
+              </div>
+              Deterministic widgets — proxy runs raw SQL as the tenant SP;
+              same row filter.
+            </div>
+            <div className="rounded-md border border-violet-200 bg-violet-50/40 px-3 py-2">
+              <div className="font-medium text-violet-900 mb-0.5">
+                /api/agent/insights
+              </div>
+              Custom agent: FM API plans + synthesizes; tool calls re-enter
+              the proxy as the tenant SP.
+            </div>
           </div>
         </CardContent>
       </Card>
