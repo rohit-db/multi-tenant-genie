@@ -46,7 +46,9 @@ import {
   Wand2,
   CheckCircle2,
   AlertCircle,
+  X,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { api, type Tenant, type WorkspaceInfo } from "@/lib/api";
 
 const CHART_COLORS = [
@@ -127,6 +129,8 @@ function ProblemStatement() {
   );
 }
 
+type PanelKind = "chat" | "agent" | null;
+
 function Dashboard({
   tenant,
   active,
@@ -138,6 +142,7 @@ function Dashboard({
   setTenantId: (id: string) => void;
   ws: WorkspaceInfo;
 }) {
+  const [panel, setPanel] = useState<PanelKind>(null);
   const fq = `${ws.catalog}.${ws.schema_name}`;
 
   const sqlKpis = `SELECT
@@ -195,12 +200,30 @@ function Dashboard({
             row-filtered
           </Badge>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] uppercase tracking-wider text-slate-500">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5"
+            onClick={() => setPanel("chat")}
+          >
+            <Bot className="h-3.5 w-3.5 text-indigo-600" />
+            Chat
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 border-violet-200 hover:bg-violet-50"
+            onClick={() => setPanel("agent")}
+          >
+            <Wand2 className="h-3.5 w-3.5 text-violet-600" />
+            Insights agent
+          </Button>
+          <span className="text-[11px] uppercase tracking-wider text-slate-500 ml-2">
             Acting as
           </span>
           <Select value={tenant.tenant_id} onValueChange={(v) => setTenantId(v)}>
-            <SelectTrigger className="h-8 w-[200px] text-sm">
+            <SelectTrigger className="h-8 w-[180px] text-sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -214,35 +237,105 @@ function Dashboard({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_400px] gap-5">
-        <div className="space-y-6 min-w-0">
-          <section className="space-y-3">
-            <SectionLabel
-              kicker="Live data"
-              hint="Direct SQL through the tenant SP — UC row filter applies."
-            />
-            <KpiRow kpis={kpis} />
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-              <RoutesCard data={routes} />
-              <CabinMixCard data={cabin} />
-            </div>
-            <MonthlyTrendCard data={trend} />
-            <SuppliersCard data={suppliers} />
-          </section>
-
-          <section className="space-y-3">
-            <SectionLabel
-              kicker="AI"
-              hint="Custom agent reasons over the same tenant-scoped data."
-              accent="violet"
-            />
-            <InsightsAgentCard tenant={tenant} />
-          </section>
+      <div className="space-y-3">
+        <SectionLabel
+          kicker="Live data"
+          hint="Direct SQL through the tenant SP — UC row filter applies."
+        />
+        <KpiRow kpis={kpis} />
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+          <RoutesCard data={routes} />
+          <CabinMixCard data={cabin} />
         </div>
-        <div className="lg:sticky lg:top-20 lg:self-start min-w-0">
-          <ChatPanel tenant={tenant} />
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+          <MonthlyTrendCard data={trend} />
+          <SuppliersCard data={suppliers} />
         </div>
       </div>
+
+      <SidePanel
+        open={panel === "chat"}
+        onClose={() => setPanel(null)}
+        title="Chat with your data"
+        accent="indigo"
+      >
+        <ChatPanel tenant={tenant} />
+      </SidePanel>
+
+      <SidePanel
+        open={panel === "agent"}
+        onClose={() => setPanel(null)}
+        title="Travel insights agent"
+        accent="violet"
+      >
+        <InsightsAgentCard tenant={tenant} />
+      </SidePanel>
+    </>
+  );
+}
+
+function SidePanel({
+  open,
+  onClose,
+  title,
+  accent,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  accent: "indigo" | "violet";
+  children: React.ReactNode;
+}) {
+  // Close on Escape
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  const accentBar =
+    accent === "violet"
+      ? "bg-gradient-to-r from-violet-500 via-fuchsia-500 to-indigo-500"
+      : "bg-gradient-to-r from-indigo-500 via-violet-500 to-indigo-500";
+
+  return (
+    <>
+      <div
+        className={cn(
+          "fixed inset-0 bg-slate-900/30 z-40 transition-opacity duration-200",
+          open
+            ? "opacity-100 pointer-events-auto"
+            : "opacity-0 pointer-events-none",
+        )}
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <aside
+        className={cn(
+          "fixed top-0 right-0 h-full w-full sm:w-[480px] bg-slate-50 shadow-2xl z-50",
+          "flex flex-col transition-transform duration-200 ease-out",
+          open ? "translate-x-0" : "translate-x-full",
+        )}
+        aria-hidden={!open}
+      >
+        <div className={`h-1 ${accentBar}`} />
+        <div className="flex items-center justify-between px-5 py-3 border-b bg-white">
+          <div className="text-sm font-semibold">{title}</div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-7 w-7 rounded-md hover:bg-slate-100 flex items-center justify-center text-slate-500"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4">{children}</div>
+      </aside>
     </>
   );
 }
