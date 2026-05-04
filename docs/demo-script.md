@@ -2,190 +2,121 @@
 
 Two artifacts for sharing the multi-tenant Genie reference with your team:
 
-- **Section 1** — a tight 10-minute screen-recording script with stage directions and narration.
+- **Section 1** — a 6-7 minute screen-recording script with stage directions and narration.
 - **Section 2** — a long-form blog draft you can adapt for an internal post.
 
 ---
 
-## Section 1 — 10-Minute Demo Script
+## Section 1 — 6-7 Minute Demo Script
 
 **Format:** screen recording with voiceover. App URL: `https://multi-tenant-genie-7474655568396905.aws.databricksapps.com` (FEVM deploy). Default tenant: Acme Industrial.
 
 **Before recording:**
-- Open the app, land on Portal tab. Confirm Acme Industrial is selected.
-- Have a tab/window with the repo open as a backup reference.
-- Close any chat-app or notification windows.
+- Open the app on Portal tab, Acme selected, dashboard loaded.
+- Have the repo URL ready.
+- Close notification windows.
+
+**Flow:** Hook → Demo (all together) → Isolation → Architecture → Wrap.
 
 ---
 
 ### 0:00 — 0:30 · Hook
 
-**On screen:** Portal tab, default landing page, dashboard fully loaded.
+**On screen:** Portal tab, dashboard loaded.
 
-> "Most teams asking me about embedding Genie are building something that looks like this. A customer-facing data app — branded portal, charts driven by their data, a chat assistant that answers questions in plain English. The dashboard is the easy part. The hard part is making sure tenant A never sees tenant B's data, even when they share the same workspace, the same warehouse, and the same Genie space.
+> "Most teams asking about embedding Genie are building something that looks like this — a branded portal, charts on their data, a chat assistant. The dashboard's easy. The hard part is making sure tenant A never sees tenant B's data, on a shared workspace, shared warehouse, shared Genie space.
 >
-> This is a reference solution that solves that. It's a fork-and-adapt repo. Let me show you what it does, how it works, and how to take it."
+> This is a reference that solves that. Let me show you."
 
 ---
 
-### 0:30 — 1:30 · The pattern in action
+### 0:30 — 3:30 · Demo
 
-**On screen:** Portal tab, Acme Industrial selected. Use the "Acting as" dropdown to switch to Nike. Pause. Switch to CloudVenture. Pause. Switch back to Acme.
+**On screen:** Portal tab, Acme selected. Switch tenants via "Acting as" dropdown — Nike, then CloudVenture, back to Acme.
 
-> "I'm currently signed in as Acme Industrial. Two hundred bookings. Half a million in spend. Top route is Austin to Denver.
+> "Signed in as Acme. 250 bookings, half a million in spend, top route Austin–Denver.
 >
-> I'll switch tenants. Same dashboard, same SQL queries running underneath — but Nike's numbers are completely different. CloudVenture's are different again.
->
-> I haven't changed any code. I haven't changed any prompts. The proxy minted a different OAuth token for each tenant, and Unity Catalog's row filter scoped every query to that tenant's rows. The isolation isn't in the model or the prompt — it's in the warehouse."
+> Switch to Nike. Same dashboard, same queries — different numbers. CloudVenture, different again. No code changed, no prompts changed. The proxy minted a different OAuth token per tenant, UC's row filter did the rest. Isolation lives in the warehouse, not the model."
+
+**Click the Chat button in the header. Panel slides in. Type "what was my busiest month?" Send.**
+
+> "Chat panel is Genie. Tenant asks in English, Genie writes the SQL, UC trims it to Acme's rows. Answer's grounded in real data."
+
+**Close chat. Click the Insights agent button. Panel slides in.**
+
+> "Custom agents follow the same pattern. This one's three steps — plan, execute, synthesize. Foundation Model picks the SQL, each query runs as Acme's SP, Foundation Model writes the recommendation."
+
+**Pick or type a focus area like "Where am I spending the most and what's growing fastest?" Click Run insights.**
+
+> "Plan up top. Three tool calls."
+
+**Expand a tool call.**
+
+> "Actual SQL the agent wrote. Result rows — Acme only. Switch to Nike, rerun, you get Nike. The agent could be LangGraph, the OpenAI Agents SDK, anything. The guarantee comes from the SP token, not the framework."
+
+**Close panel. Switch to Admin tab.**
+
+> "Admin tab is the operator surface. Live numbers from the audit log. Onboard creates the SP, mints the OAuth secret, encrypts it in Lakebase, inserts the UC mapping, grants Genie access — all transactional, rolls back on failure. There's a bulk path for thousands of tenants — paste a CSV, get a job."
 
 ---
 
-### 1:30 — 3:00 · Why this matters + how it works
+### 3:30 — 5:00 · Isolation
 
-**On screen:** Briefly switch to the Architecture tab. Scroll to the system architecture diagram. Then scroll down to "Row filter — live SQL".
+**On screen:** Switch to Isolation proof tab. Pick Acme. Type a question or use a sample chip. Click Ask Genie.**
 
-> "Here's why this matters. If you've tried multi-tenant Genie before, you've probably either (a) used dynamic views and hit performance issues, or (b) tried to filter at the prompt layer, which is non-deterministic and not auditable.
->
-> What you actually want is a single, deterministic, SQL-level enforcement point that doesn't depend on the model behaving correctly. Unity Catalog row filters give you that. This is the function that's deployed in UC right now."
-
-**Highlight the row filter SQL on screen.**
-
-> "When any tenant SP queries a governed table, this function runs. It joins `sp_tenant_mapping` on `session_user()` — which resolves to the SP's application ID inside UC. The mapping says which tenant_id this SP is allowed to see, and that's the only filter that gets applied. No `WHERE tenant_id = something` in the proxy code. No prompt instruction. UC enforces it.
->
-> One Service Principal per tenant. One row filter, deployed once. That's the whole pattern."
-
----
-
-### 3:00 — 4:30 · Genie chat + the inspector
-
-**On screen:** Back to Portal tab. Click the **Chat** button in the header. Panel slides in.
-
-> "On the Portal, the chat panel is Genie. Tenant types a natural-language question. Genie generates SQL. UC row filter applies. Watch."
-
-**Type:** "What was my busiest month?" Hit send. Wait for response.
-
-> "Genie wrote the SQL. UC trimmed it to Acme's rows. Answer comes back grounded in real data."
-
-**Close chat panel. Switch to the Isolation proof tab. Pick Acme. Type the same question or use a sample chip. Click Ask Genie.**
-
-> "Same question on the Isolation proof tab. The difference here is the inspector — six steps run on every ask, and you can see what's actually on the wire."
+> "Isolation proof tab. Six steps run on every ask. The inspector shows what's actually on the wire."
 
 **Click step 1 "Authenticate".**
 
-> "Step 1 — proxy looks up the tenant in Lakebase. Here's the actual SQL it ran. Here's the Lakebase host."
+> "Step 1, proxy looks up the tenant in Lakebase. Actual SQL, actual host."
 
 **Click step 4 "Apply row filter" (amber).**
 
-> "Step 4 is the load-bearing one. The row filter ran in the warehouse for *this* SP. This is the enforcement point. The proxy doesn't get to decide what the tenant can see. UC does."
+> "Step 4 is the one that matters. UC's row filter runs in the warehouse for this SP. Proxy doesn't get to decide what the tenant sees. UC does."
 
-**Close the inspector. Switch back to Portal.**
+**Scroll up, click Verify isolation.**
 
----
+> "And the proof — Verify isolation runs as every active tenant, queries the bookings table, asserts each only sees its own rows. This is the test that has to be green for the architecture to mean anything."
 
-### 4:30 — 6:30 · Custom agent
+**Wait for results.**
 
-**On screen:** Portal tab, Acme. Click the **Insights agent** button. Panel slides in.
-
-> "Most of what people are actually building now isn't just a chatbot — it's a custom agent. Multiple tools, planning, synthesis. The good news is the same isolation pattern works."
-
-**Point at the agent panel description.**
-
-> "This is a small custom agent — three steps. Plan, execute, synthesize.
->
-> Step one — Foundation Model API picks two or three SQL queries that would help answer the focus area.
-> Step two — each query runs through the proxy as Acme's Service Principal. Same OAuth token Genie would use. Same row filter applies.
-> Step three — Foundation Models takes the results and writes a recommendation.
->
-> Watch."
-
-**Pick or type a focus area like "Where am I spending the most and what's growing fastest?" Click Run insights. Wait ~10-15 seconds.**
-
-> "There's the agent's plan — one sentence on what it's looking for.
->
-> Three tool calls. I'll expand the first one."
-
-**Click to expand a tool call.**
-
-> "Here's the actual SQL the agent wrote. Here's the result table — Acme's rows only. If I switched to Nike and reran, I'd get Nike's rows.
->
-> And here's the synthesized recommendation, grounded in those numbers.
->
-> The agent could be doing anything — anomaly detection, recommendation, multi-turn tool use through LangGraph or the OpenAI Agents SDK. The isolation guarantee comes from the SP token, not the agent framework. Same pattern Genie uses, applied to anything you build."
-
-**Close panel.**
+> "All passing."
 
 ---
 
-### 6:30 — 7:30 · Operating it
+### 5:00 — 6:00 · Architecture
 
-**On screen:** Switch to Admin tab.
+**On screen:** Switch to Architecture tab. Scroll to system architecture diagram.
 
-> "On the Admin tab — operating the platform. The numbers strip is computed live from the audit log. Active tenants. Queries last hour. Latency. Errors.
+> "Whole architecture in one picture. Three call paths from the tenant — Genie, direct SQL for the widgets, custom agent. All three converge on the same OAuth minter, all three run as the tenant SP, UC's row filter is the single enforcement point.
 >
-> Tenant table — every onboard is a single click. The proxy creates the SP, mints an OAuth secret, encrypts it in Lakebase with AES-GCM, inserts the UC mapping row, grants UC access, grants Genie access. All transactional — if any step fails, it rolls back."
+> Lakebase holds the operational metadata — tenant registry, encrypted credentials, audit. UC holds the governed data and the mapping table the row filter joins."
 
-**Click Verify isolation.**
+**Scroll to "Row filter — live SQL".**
 
-> "And the proof point — Verify isolation runs through every active tenant, executes a query as that tenant against the bookings table, and asserts each one only sees its own rows. This is the test that has to be green for the whole thing to mean anything."
-
-**Wait for verify results.**
-
-> "All passing. There's a bulk onboard path for thousands of tenants too — paste a CSV, get a job ID back, poll for progress."
+> "This is the function deployed in UC. It joins `sp_tenant_mapping` on `session_user()` — which resolves to the SP's app ID. No `WHERE tenant_id =` in the proxy code, no prompt instruction. One SP per tenant, one row filter, deployed once. That's the whole pattern."
 
 ---
 
-### 7:30 — 8:30 · Architecture
+### 6:00 — 6:45 · Take it + wrap
 
-**On screen:** Switch to Architecture tab. Scroll to the system architecture diagram.
+**On screen:** Portal tab clean, or terminal showing the repo.
 
-> "Here's the whole architecture in one picture.
+> "Repo's `github.com/rohit-db/multi-tenant-genie`, branch `generalize-and-scale`. `scripts/deploy.sh` does the whole deploy in one command — Lakebase, secret scope, app SP, UC grants. 90 seconds against a fresh workspace.
 >
-> Three call paths from the tenant — Genie, direct SQL for the dashboard widgets, and the custom agent. All three converge on the same OAuth M2M minter. All three end up running SQL as the tenant SP through the warehouse. UC's row filter is the single enforcement point.
+> Three takeaways. One — UC row filters are the right enforcement layer. Not the model, not the prompt, not the app code. Two — the SP-per-tenant pattern works for any agent you build, not just Genie. Three — this is opinionated. Pattern A only, Lakebase for OLTP, no Pattern B yet. Future directions are in the doc.
 >
-> Lakebase holds the operational metadata — tenant registry, encrypted credentials, audit log. UC holds the governed data and the mapping table the row filter joins.
->
-> If you remember one thing from this video, remember this: the row filter is the line between tenant A and tenant B. Everything else is plumbing."
+> Fork it, adapt the domain, tell me what you build."
 
----
-
-### 8:30 — 9:30 · Take it
-
-**On screen:** Switch to a terminal or repo view if you have one. Otherwise stay on the app and reference the URL verbally.
-
-> "Repo's at github dot com slash rohit-db slash multi-tenant-genie. Branch is `generalize-and-scale`.
->
-> There's a `scripts/deploy.sh` that does the whole thing in one command. Lakebase instance, secret scope, app SP, UC grants — all of it. I deployed this against a fresh FEVM workspace in 90 seconds."
-
-**Show the README briefly if convenient.**
-
-> "Pre-reqs: a serverless workspace, a SQL warehouse, a Genie space, the databricks CLI authed. That's it. Run the script, open the URL, click Onboard. Working multi-tenant Genie demo, less than two minutes."
-
----
-
-### 9:30 — 10:00 · Wrap
-
-**On screen:** Back to Portal tab — clean view.
-
-> "Three things to take away.
->
-> One — UC row filters are the right enforcement layer for multi-tenant Genie. Not the model. Not the prompt. Not the application code.
->
-> Two — the same SP-per-tenant pattern works for any AI agent you build. Genie, custom agents, third-party agents — they all converge on the same token, the same row filter, the same guarantee.
->
-> Three — this is opinionated. Pattern A only. Lakebase for the operational store. UC for the data. Pattern B is documented as a future direction. Rate limits, multi-space UI, cost tracking — all listed in the future-directions doc.
->
-> Fork it. Adapt the domain. Deploy it. Tell me what you build."
-
-**End on the Portal page.**
+**End on Portal.**
 
 ---
 
 ### Director's notes
 
-- **Total runtime:** about 10 minutes if you don't pause too long for clicks. If you cut the operating section (6:30-7:30) you can hit 8 minutes for a tighter version.
-- **The two switch-tenants moments matter most** — the 0:30-1:30 section where the dashboard numbers visibly change. Don't rush it. Let the audience see same-question-different-answer.
-- **The agent demo is the new hook** — most people watching have seen Genie demos. The "same pattern, custom agent" moment is what makes this re-shareable.
-- **Don't apologize for opinions.** Pattern A only, Lakebase for OLTP, no Pattern B yet — those are deliberate. State them clearly.
+- **Total runtime:** ~6:45 if clicks land cleanly. Pad pauses on the tenant-switch moment — that's the most-rewatched second.
+- **The agent moment is the differentiator.** Most viewers have seen Genie demos. "Same pattern, custom agent" is why they re-share.
+- **Don't apologize for opinions.** Pattern A only, Lakebase for OLTP — state them, move on.
 
 ---
 
