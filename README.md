@@ -32,16 +32,17 @@ Open [http://localhost:5173](http://localhost:5173).
 
 See [docs/local-dev.md](docs/local-dev.md) for the full local-dev guide.
 
-## Production deploy (Databricks Apps)
+## Deploy (Databricks Asset Bundle)
 
-The canonical deploy is as a Databricks App. `app.yaml` declares the Lakebase + warehouse + Genie space + AES key resources; the platform injects env vars at runtime.
+The repo ships as a Databricks Asset Bundle. The minimal flow:
 
 ```bash
-databricks apps create multi-tenant-genie
-databricks apps deploy multi-tenant-genie --source-code-path .
+databricks bundle deploy --target dev
 ```
 
-See [docs/deploy.md](docs/deploy.md) for the full walkthrough including IAM grants and AES key setup.
+That wraps the Databricks App defined in `app.yaml`. The Lakebase + warehouse + Genie space + secret-scope bindings still need to be wired — `scripts/deploy.sh` does that end-to-end, including the UC grants and the AES key setup, and is the recommended fallback until the bundle covers those resources declaratively.
+
+See [docs/deploy.md](docs/deploy.md) for the full walkthrough.
 
 ## How the isolation works
 
@@ -61,18 +62,19 @@ Step 4 is the load-bearing step. The full pattern is documented in [docs/pattern
 ```
 multi-tenant-genie/
 ├── README.md                    # this file
-├── app.yaml                     # Databricks Apps deploy manifest
+├── databricks.yml               # Asset Bundle root
+├── resources/                   # bundle resources (app, etc.)
+├── app.yaml                     # Databricks Apps manifest (used by the bundle)
 ├── docker-compose.yml           # local Postgres for dev
 ├── bootstrap.sh                 # one-shot local-dev setup
 ├── docs/
 │   ├── architecture.md          # full system design
 │   ├── pattern.md               # how the isolation pattern works
-│   ├── deploy.md                # Databricks Apps deploy guide
+│   ├── deploy.md                # bundle + Databricks Apps deploy guide
 │   ├── local-dev.md             # local dev guide
 │   ├── customizing.md           # swap the demo domain, change schema
 │   ├── scaling.md               # workspace caps, Genie 10k cap, Lakebase
 │   ├── security-rbac.md         # AES-at-rest, admin bypass, audit
-│   ├── future-directions.md     # Pattern B, rate limits, multi-space
 │   └── migration-from-poc.md    # for anyone who cloned the original POC
 ├── server/                      # FastAPI proxy
 │   ├── app.py
@@ -96,8 +98,8 @@ multi-tenant-genie/
 ## Adapting it
 
 - **Different demo data?** Copy `domain/travel/` → `domain/<your-domain>/`, edit, set `DOMAIN=<your-domain>`. See [docs/customizing.md](docs/customizing.md).
-- **Different Genie space per tenant?** The `client_registry.genie_space_id` column already exists — surface it in the UI when you need it. See [docs/future-directions.md](docs/future-directions.md).
-- **Pattern B (custom claims)?** Documented as a future direction; not implemented. See [docs/future-directions.md](docs/future-directions.md).
+- **Different Genie space per tenant?** The `client_registry.genie_space_id` column already exists — surface it in the UI when you need it.
+- **Pattern B (custom claims)?** A future direction; not implemented in this reference.
 
 ## Status
 

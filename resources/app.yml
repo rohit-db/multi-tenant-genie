@@ -1,0 +1,17 @@
+# Databricks App resource for the multi-tenant-genie bundle.
+#
+# This declares the app itself; the resource bindings (Lakebase,
+# warehouse, Genie space, secret scope for the AES key) are still
+# configured via the Apps UI or `scripts/deploy.sh` because those
+# bindings depend on resources that live outside the bundle today.
+#
+# Once bundle deploy completes, run scripts/deploy.sh to bind the
+# Lakebase + secrets and apply the UC grants, or wire the bindings
+# manually in the workspace.
+
+resources:
+  apps:
+    multi_tenant_genie:
+      name: multi-tenant-genie
+      description: "Multi-tenant Genie demo — SP lifecycle, Lakebase metadata, UC row-filter isolation"
+      source_code_path: ${workspace.file_path}

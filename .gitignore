@@ -45,3 +45,18 @@ bulk-onboard-report*.json
 
 # Local docker volumes
 .docker/
+
+# Sibling demos (kept on disk for local work, not part of this repo)
+esa-demo/
+kwik-trip-demo/
+
+# Blog drafts and recording scripts — published externally, not tracked here
+docs/blog-medium.md
+docs/demo-script.md
+
+# Internal planning artifacts
+docs/superpowers/
+docs/future-directions.md
+
+# Databricks bundle artifacts
+.databricks/

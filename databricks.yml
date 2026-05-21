@@ -1,0 +1,28 @@
+# Databricks Asset Bundle for multi-tenant-genie.
+#
+# This is a minimal bundle stub: it wraps the Databricks App defined in
+# app.yaml so the project can be deployed with `databricks bundle deploy`.
+#
+# The Lakebase instance, SQL warehouse, Genie space, and secret-scope
+# bindings are still configured via the existing scripts/deploy.sh
+# (which idempotently creates resources, applies UC grants, and wires
+# the Lakebase resource binding). The bundle is the recommended entry
+# point; the script remains as a fallback for the bits the bundle
+# does not yet provision declaratively.
+
+bundle:
+  name: multi-tenant-genie
+
+include:
+  - resources/*.yml
+
+targets:
+  dev:
+    mode: development
+    default: true
+    # workspace.host is read from the active databricks CLI profile;
+    # override here if you want a fixed dev workspace.
+
+  prod:
+    mode: production
+    # workspace.host: https://<your-prod-workspace>.cloud.databricks.com
