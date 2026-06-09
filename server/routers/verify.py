@@ -7,16 +7,12 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from server.lib import verifier
+from server.primitives import unity_catalog as verifier
 from server.lib.config import CONFIG
 from server.lib.repository import credential as cred_repo
-from server.routers import tenants as _tenants_mod
+from server.services import runtime
 
 router = APIRouter()
-
-
-def _mgr():
-    return _tenants_mod._mgr()
 
 
 class VerifyResultRow(BaseModel):
@@ -35,10 +31,11 @@ def _collect_credentials(tenants) -> dict[str, Optional[str]]:
 @router.post('', response_model=list[VerifyResultRow])
 async def run_verify() -> list[VerifyResultRow]:
     try:
-        tenants = [t for t in _mgr().list_tenants() if t.status == "active"]
+        mgr = runtime.manager()
+        tenants = [t for t in mgr.list_tenants() if t.status == "active"]
         credentials = _collect_credentials(tenants)
         executor = verifier.HttpExecutor(
-            host=CONFIG.host, warehouse_id=_mgr().warehouse_id
+            host=CONFIG.host, warehouse_id=mgr.warehouse_id
         )
         results = verifier.verify_all(
             executor=executor, tenants=tenants, credentials=credentials,

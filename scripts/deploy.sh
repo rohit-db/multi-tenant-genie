@@ -21,6 +21,8 @@
 #                       /Workspace/Users/<me>/<APP_NAME>)
 #
 # Optional:
+#   DASHBOARD_ID        published AI/BI dashboard id for external embedding
+#                       (written into app.yaml as MT_GENIE_DASHBOARD_ID)
 #   DRY_RUN=1           print actions, don't run them
 #   SKIP_FRONTEND=1     skip `npm run build` (use existing web/build)
 
@@ -163,6 +165,53 @@ APP_URL="$(echo "$APP_INFO" | jq -r '.url')"
 
 log "App SP: $APP_SP_APP_ID (db_id=$APP_SP_DB_ID)"
 
+# -------------------------------------------------------------- Populate app.yaml
+# app.yaml ships with blank workspace-scoped values so nothing workspace-
+# specific is committed. Fill them from the deploy inputs before syncing.
+log "Populating app.yaml env from deploy inputs..."
+if [ "${DRY_RUN:-0}" = 1 ]; then
+  echo "+ populate app.yaml (MT_GENIE_HOST/CATALOG/SCHEMA/SPACE_ID/DASHBOARD_ID/ADMIN_GROUP/DOMAIN)" >&2
+else
+  MT_GENIE_HOST="$HOST" \
+  MT_GENIE_CATALOG="$CATALOG" \
+  MT_GENIE_SCHEMA="$SCHEMA" \
+  MT_GENIE_SPACE_ID="$GENIE_SPACE_ID" \
+  MT_GENIE_DASHBOARD_ID="${DASHBOARD_ID:-}" \
+  MT_GENIE_ADMIN_GROUP="$ADMIN_GROUP" \
+  MT_GENIE_DOMAIN="$DOMAIN" \
+  python3 - <<'PY'
+import os, re, sys
+
+path = "app.yaml"
+mapping = {
+    "MT_GENIE_HOST": os.environ["MT_GENIE_HOST"],
+    "MT_GENIE_CATALOG": os.environ["MT_GENIE_CATALOG"],
+    "MT_GENIE_SCHEMA": os.environ["MT_GENIE_SCHEMA"],
+    "MT_GENIE_SPACE_ID": os.environ["MT_GENIE_SPACE_ID"],
+    "MT_GENIE_DASHBOARD_ID": os.environ.get("MT_GENIE_DASHBOARD_ID", ""),
+    "MT_GENIE_ADMIN_GROUP": os.environ["MT_GENIE_ADMIN_GROUP"],
+    "DOMAIN": os.environ["MT_GENIE_DOMAIN"],
+}
+lines = open(path).read().splitlines()
+out, i = [], 0
+while i < len(lines):
+    line = lines[i]
+    m = re.match(r"^(\s*)- name:\s*(\S+)\s*$", line)
+    out.append(line)
+    if m and m.group(2) in mapping and i + 1 < len(lines):
+        nxt = lines[i + 1]
+        vm = re.match(r"^(\s*)value:\s*.*$", nxt)
+        if vm:
+            out.append(f'{vm.group(1)}value: "{mapping[m.group(2)]}"')
+            i += 2
+            continue
+    i += 1
+open(path, "w").write("\n".join(out) + "\n")
+print("app.yaml populated", file=sys.stderr)
+PY
+fi
+ok "app.yaml populated (local edit; not committed)"
+
 # -------------------------------------------------------------- Sync source
 log "Syncing source to $WORKSPACE_PATH..."
 run databricks sync . "$WORKSPACE_PATH" \
@@ -297,9 +346,15 @@ cat <<EOF >&2
   Schema:         $CATALOG.$SCHEMA
   Genie space:    $GENIE_SPACE_ID
 
-Open the URL in a browser where you're signed in to the workspace.
-The Demo / Admin / Architecture tabs should render. Onboard a tenant
-from the Admin tab to confirm the SCIM + UC + Lakebase + Genie path.
+Open the URL in a browser where you're signed in to the workspace,
+then sign in to the app itself:
+
+  analyst@skydesk.app  / skydesk   (product: Home / Ask / Dashboards)
+  operator@skydesk.app / skydesk   (product + /console)
+
+Demo accounts are seeded on first boot (override the password with
+MT_GENIE_DEMO_PASSWORD). Onboard a tenant from the operator console to
+confirm the SCIM + UC + Lakebase + Genie path.
 
 If onboard fails with a UC permission error on bookings/customers,
 the governed tables don't exist yet — apply sql/setup.sql and your

@@ -43,10 +43,10 @@ import {
   PowerOff,
 } from "lucide-react";
 import { api, type Tenant, type AuditRow } from "@/lib/api";
-import { NumbersStrip } from "@/components/NumbersStrip";
-import { BulkOnboardDialog } from "@/components/BulkOnboardDialog";
-import { VerifyIsolationModal } from "@/components/VerifyIsolationModal";
-import { TenantHistoryDrawer } from "@/components/TenantHistoryDrawer";
+import { NumbersStrip } from "@/components/console/NumbersStrip";
+import { BulkOnboardDialog } from "@/components/console/BulkOnboardDialog";
+import { VerifyIsolationModal } from "@/components/console/VerifyIsolationModal";
+import { TenantHistoryDrawer } from "@/components/console/TenantHistoryDrawer";
 
 function statusBadge(status: string) {
   if (status === "active")

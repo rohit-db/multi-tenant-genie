@@ -103,4 +103,4 @@ Per-tenant override: the `client_registry.genie_space_id` column accepts a UUID;
 
 ## Change the UI branding
 
-`web/src/App.tsx` controls the header title, logomark, and tabs. The Inspector's amber accent on step 4 is in `web/src/components/Inspector.tsx`. Tailwind palette is the standard `slate` / `indigo` / `emerald` / `rose` / `amber` from `tailwind.config.js`.
+`web/src/App.tsx` controls the header title, logomark, and tabs. The Inspector's amber accent on step 4 is in `web/src/components/ask/Inspector.tsx`. Tailwind palette is the standard `slate` / `indigo` / `emerald` / `rose` / `amber` from `tailwind.config.js`.

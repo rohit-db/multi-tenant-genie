@@ -38,8 +38,8 @@ async def list_audit(limit: int = 50) -> list[AuditRow]:
 @router.get('/mapping')
 async def list_mapping() -> list[dict[str, Any]]:
     try:
-        from server.routers.tenants import _mgr
-        rows = _mgr()._execute_sql(
+        from server.services import runtime
+        rows = runtime.manager()._execute_sql(
             f"""SELECT sp_app_id, tenant_id, active FROM {CONFIG.fq_mapping}
                 ORDER BY tenant_id"""
         )

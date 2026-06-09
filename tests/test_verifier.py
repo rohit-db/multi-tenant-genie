@@ -1,4 +1,4 @@
-"""Tests for server.lib.verifier — isolation verification logic.
+"""Tests for server.primitives.unity_catalog — isolation verification logic.
 
 The verifier executes SQL as each tenant's SP and asserts cross-tenant
 isolation. Tests mock the SQL execution layer to focus on the assertion
@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from server.lib import verifier
+from server.primitives import unity_catalog as verifier
 
 
 @dataclass

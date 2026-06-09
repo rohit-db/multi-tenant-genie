@@ -6,4 +6,9 @@ cryptography>=42.0.0
 databricks-sdk>=0.40.0
 openai>=1.52.0
 requests>=2.31.0
-PyYAML>=6.0
+# Async HTTP client for the edge / token-broker reverse proxy (edge/).
+httpx>=0.27.0
+# Managed MCP transport (Genie / UC functions / SQL servers). Optional at
+# runtime — only imported when MT_GENIE_TRANSPORT=mcp.
+mcp>=1.9
+databricks-mcp>=0.9.0

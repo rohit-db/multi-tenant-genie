@@ -29,16 +29,22 @@ env:
   - name: AES_KEY_BASE64
     valueFrom: aes_key
 
-  # Workspace-scoped values — edit these for your deploy or move
-  # them to per-environment app config.
+  # Workspace-scoped values. These are intentionally blank in the repo so
+  # nothing workspace-specific ships. `scripts/deploy.sh` fills them in from
+  # your deploy inputs (CATALOG, GENIE_SPACE_ID, WAREHOUSE host, etc.) right
+  # before syncing. To deploy by hand instead, set them here.
   - name: MT_GENIE_HOST
-    value: "https://fevm-serverless-jsr0s9.cloud.databricks.com"
+    value: ""
   - name: MT_GENIE_CATALOG
-    value: "serverless_jsr0s9_catalog"
+    value: ""
   - name: MT_GENIE_SCHEMA
     value: "mt_genie_demo"
   - name: MT_GENIE_SPACE_ID
-    value: "01f13e70745b1ce5b9cf8d9e6a46e23f"
+    value: ""
+  # Published AI/BI dashboard (embed_credentials=false) for external embedding.
+  # Generate one with scripts/publish_dashboard.py, then set its id here.
+  - name: MT_GENIE_DASHBOARD_ID
+    value: ""
   - name: MT_GENIE_ADMIN_GROUP
     value: "admins"
   - name: DOMAIN

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from server.routers import router
@@ -57,6 +58,13 @@ async def lifespan(app: FastAPI):
       logging.exception("Lakebase migrations failed (continuing): %s", e)
       # Don't raise — app should still serve UI + /health while DB issues
       # are sorted. API calls that touch DB will fail loudly until then.
+
+  if has_db:
+    try:
+      from server.lib.auth import seed_demo_users
+      seed_demo_users()
+    except Exception as e:
+      logging.warning("Demo user seeding skipped: %s", e)
   yield
 
 
@@ -85,11 +93,24 @@ async def health():
 
 
 # ============================================================================
-# SERVE STATIC FILES FROM web/build (MUST BE LAST!)
+# SERVE THE REACT SPA FROM web/build (MUST BE LAST!)
 # ============================================================================
-# This static file mount MUST be the last route registered!
-# It catches all unmatched requests and serves the React app.
-# Any routes added after this will be unreachable!
+# We use react-router (BrowserRouter), so deep links like /login or /console
+# must fall back to index.html. Built assets are served directly; everything
+# else that isn't an /api or /health route returns index.html for the client
+# router to resolve. These routes MUST be registered last.
 _WEB_BUILD = Path(__file__).resolve().parent.parent / 'web' / 'build'
+_INDEX = _WEB_BUILD / 'index.html'
+
+if (_WEB_BUILD / 'assets').exists():
+  app.mount('/assets', StaticFiles(directory=str(_WEB_BUILD / 'assets')), name='assets')
+
 if _WEB_BUILD.exists():
-  app.mount('/', StaticFiles(directory=str(_WEB_BUILD), html=True), name='static')
+
+  @app.get('/{full_path:path}')
+  async def spa(full_path: str):
+    """Serve a real built file when it exists, otherwise the SPA shell."""
+    candidate = _WEB_BUILD / full_path
+    if full_path and candidate.is_file():
+      return FileResponse(str(candidate))
+    return FileResponse(str(_INDEX))

@@ -1,42 +1,23 @@
-"""Tenant SP lifecycle endpoints (wraps server/lib/sp_manager)."""
+"""Tenant SP lifecycle HTTP surface.
+
+Thin adapter over ``services.tenant_service`` — request/response models,
+operator auth, and a one-line call into the service per endpoint. The
+shared SP manager lives as a process-wide singleton in
+``services.runtime`` and is reached only through the service layer.
+"""
 
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from server.lib.sp_manager import SPManager
-from server.lib.repository import audit as audit_repo
+from server.lib.auth import require_operator
+from server.services import tenant_service
 
 router = APIRouter()
-_mgr_singleton: SPManager | None = None
-
-
-def _mgr() -> SPManager:
-    global _mgr_singleton
-    if _mgr_singleton is None:
-        _mgr_singleton = SPManager()
-    return _mgr_singleton
-
-
-def _invalidate_minter_cache(sp_app_id: str) -> None:
-    """Force the next request to mint a fresh token for this SP.
-
-    Note: a JWT already issued by Databricks remains valid until its TTL
-    (~1h) regardless of cache state — UC will still honor it. Invalidation
-    only changes what the next mint call does. For deactivation, the SP
-    secret is also deleted, so the next mint will fail (correctly).
-    """
-    if not sp_app_id:
-        return
-    try:
-        from .genie import _minter  # late import: genie.py imports from here
-        _minter.invalidate(sp_app_id)
-    except Exception:
-        pass
 
 
 class Tenant(BaseModel):
@@ -65,52 +46,6 @@ class RotateResponse(BaseModel):
     new_client_secret: str
 
 
-@router.get('', response_model=list[Tenant])
-async def list_tenants() -> list[Tenant]:
-    try:
-        return [
-            Tenant(
-                tenant_id=t.tenant_id,
-                tenant_name=t.tenant_name,
-                sp_app_id=t.sp_app_id,
-                sp_display_name=t.sp_display_name,
-                status=t.status,
-                created_at=t.created_at,
-                updated_at=t.updated_at,
-            )
-            for t in _mgr().list_tenants()
-        ]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post('/onboard', response_model=OnboardResponse)
-async def onboard(req: OnboardRequest) -> OnboardResponse:
-    try:
-        tenant_id = req.tenant_id.strip().lower()
-        tenant_name = req.tenant_name.strip()
-        if not tenant_id or not tenant_name:
-            raise ValueError('tenant_id and tenant_name are required')
-        result = _mgr().onboard_tenant(tenant_id, tenant_name)
-        _mgr().grant_data_access([tenant_id])
-        _mgr().grant_genie_access([tenant_id])
-        return OnboardResponse(
-            tenant=Tenant(
-                tenant_id=result.tenant.tenant_id,
-                tenant_name=result.tenant.tenant_name,
-                sp_app_id=result.tenant.sp_app_id,
-                sp_display_name=result.tenant.sp_display_name,
-                status=result.tenant.status,
-                created_at=result.tenant.created_at,
-                updated_at=result.tenant.updated_at,
-            ),
-            client_id=result.client_id,
-            client_secret=result.client_secret,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 class BulkOnboardRequest(BaseModel):
     tenants: list[OnboardRequest]
 
@@ -132,7 +67,40 @@ class HistoryRow(BaseModel):
     created_at: datetime
 
 
-@router.post('/bulk', response_model=BulkOnboardResponse)
+def _to_tenant(t: Any) -> Tenant:
+    return Tenant(
+        tenant_id=t.tenant_id,
+        tenant_name=t.tenant_name,
+        sp_app_id=t.sp_app_id,
+        sp_display_name=t.sp_display_name,
+        status=t.status,
+        created_at=t.created_at,
+        updated_at=t.updated_at,
+    )
+
+
+@router.get('', response_model=list[Tenant])
+async def list_tenants() -> list[Tenant]:
+    try:
+        return [_to_tenant(t) for t in tenant_service.list_tenants()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post('/onboard', response_model=OnboardResponse, dependencies=[Depends(require_operator)])
+async def onboard(req: OnboardRequest) -> OnboardResponse:
+    try:
+        result = tenant_service.onboard(req.tenant_id, req.tenant_name)
+        return OnboardResponse(
+            tenant=_to_tenant(result.tenant),
+            client_id=result.client_id,
+            client_secret=result.client_secret,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post('/bulk', response_model=BulkOnboardResponse, dependencies=[Depends(require_operator)])
 async def bulk_onboard(req: BulkOnboardRequest) -> BulkOnboardResponse:
     if not req.tenants:
         raise HTTPException(status_code=400, detail="tenants list is empty")
@@ -144,68 +112,56 @@ async def bulk_onboard(req: BulkOnboardRequest) -> BulkOnboardResponse:
     return BulkOnboardResponse(job_id=job_id)
 
 
-@router.post('/{tenant_id}/rotate', response_model=RotateResponse)
+@router.post('/{tenant_id}/rotate', response_model=RotateResponse, dependencies=[Depends(require_operator)])
 async def rotate(tenant_id: str) -> RotateResponse:
     try:
-        new_secret = _mgr().rotate_secret(tenant_id)
-        for t in _mgr().list_tenants():
-            if t.tenant_id == tenant_id:
-                _invalidate_minter_cache(t.sp_app_id)
-                break
+        new_secret = tenant_service.rotate(tenant_id)
         return RotateResponse(tenant_id=tenant_id, new_client_secret=new_secret)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post('/{tenant_id}/deactivate')
+@router.post('/{tenant_id}/deactivate', dependencies=[Depends(require_operator)])
 async def deactivate(tenant_id: str) -> dict[str, Any]:
     try:
-        sp_app_id = ''
-        for t in _mgr().list_tenants():
-            if t.tenant_id == tenant_id:
-                sp_app_id = t.sp_app_id
-                break
-        _mgr().deactivate_tenant(tenant_id)
-        _invalidate_minter_cache(sp_app_id)
+        tenant_service.deactivate(tenant_id)
         return {'ok': True, 'tenant_id': tenant_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post('/{tenant_id}/reactivate', response_model=RotateResponse)
+@router.post('/{tenant_id}/reactivate', response_model=RotateResponse, dependencies=[Depends(require_operator)])
 async def reactivate(tenant_id: str) -> RotateResponse:
     try:
-        new_secret = _mgr().reactivate_tenant(tenant_id)
-        for t in _mgr().list_tenants():
-            if t.tenant_id == tenant_id:
-                _invalidate_minter_cache(t.sp_app_id)
-                break
+        new_secret = tenant_service.reactivate(tenant_id)
         return RotateResponse(tenant_id=tenant_id, new_client_secret=new_secret)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete('/{tenant_id}')
+@router.delete('/{tenant_id}', dependencies=[Depends(require_operator)])
 async def delete(tenant_id: str) -> dict[str, Any]:
     try:
-        sp_app_id = ''
-        for t in _mgr().list_tenants():
-            if t.tenant_id == tenant_id:
-                sp_app_id = t.sp_app_id
-                break
-        _mgr().delete_tenant(tenant_id)
-        _invalidate_minter_cache(sp_app_id)
+        tenant_service.delete(tenant_id)
         return {'ok': True, 'tenant_id': tenant_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get('/{tenant_id}/history', response_model=list[HistoryRow])
+@router.get('/{tenant_id}/history', response_model=list[HistoryRow], dependencies=[Depends(require_operator)])
 async def history(tenant_id: str, limit: int = 50) -> list[HistoryRow]:
     try:
-        rows = audit_repo.history_for_tenant(tenant_id, limit=limit)
+        rows = tenant_service.history(tenant_id, limit=limit)
         return [HistoryRow(**r.__dict__) for r in rows]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post('/grants/backfill', dependencies=[Depends(require_operator)])
+async def backfill_grants() -> dict[str, Any]:
+    """Re-apply data + Genie + dashboard grants to all active tenants.
+
+    Use after publishing (or republishing) the AI/BI dashboard so existing
+    tenant SPs get CAN_RUN on it. Idempotent.
+    """
+    return tenant_service.backfill_grants()

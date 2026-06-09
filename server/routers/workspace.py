@@ -17,6 +17,8 @@ class WorkspaceInfo(BaseModel):
     genie_space_id: str
     warehouse_name: str
     admin_group: str
+    dashboard_id: str
+    embed_configured: bool
 
 
 @router.get('/info', response_model=WorkspaceInfo)
@@ -28,4 +30,6 @@ async def workspace_info() -> WorkspaceInfo:
         genie_space_id=CONFIG.genie_space_id,
         warehouse_name=CONFIG.warehouse_name,
         admin_group=CONFIG.admin_group,
+        dashboard_id=CONFIG.dashboard_id,
+        embed_configured=bool(CONFIG.dashboard_id and CONFIG.workspace_id),
     )

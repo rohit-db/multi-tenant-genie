@@ -1,0 +1,9 @@
+/* Brand skin — the CSS half of the white-label layer (see ./brand.ts).
+ * Swap these four variables to re-skin every customer-facing surface.
+ * Loaded from web/src/main.tsx after index.css. */
+:root {
+  --brand: #0284c7; /* sky-600 */
+  --brand-strong: #0369a1; /* sky-700 */
+  --brand-soft: #e0f2fe; /* sky-100 */
+  --brand-fg: #ffffff;
+}

@@ -36,14 +36,13 @@ class _FakeGenieResponse:
 @pytest.fixture
 def client(monkeypatch):
     from server import app as app_module
-    from server.routers import tenants as tenants_router
-    from server.routers import genie as genie_router
+    from server.services import genie_service, runtime
 
     fake_mgr = MagicMock()
     fake_mgr.list_tenants.return_value = [
         _FakeTenant("acme", "Acme", "sp-acme", "mt-acme"),
     ]
-    monkeypatch.setattr(tenants_router, "_mgr", lambda: fake_mgr)
+    monkeypatch.setattr(runtime, "manager", lambda: fake_mgr)
 
     fake_genie_response = _FakeGenieResponse(
         question="how many bookings",
@@ -58,9 +57,9 @@ def client(monkeypatch):
     def fake_ask(*, space_id, question, client_id, client_secret, conversation_id, timeout_s):
         return fake_genie_response
 
-    monkeypatch.setattr(genie_router._client, "ask", fake_ask)
+    monkeypatch.setattr(genie_service._client, "ask", fake_ask)
     monkeypatch.setattr(
-        genie_router, "_get_secret_for_sp", lambda sp_app_id: "secret-acme"
+        runtime, "secret_for_sp", lambda sp_app_id: "secret-acme"
     )
 
     return TestClient(app_module.app)

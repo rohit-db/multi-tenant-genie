@@ -14,8 +14,8 @@ from typing import Any
 
 import requests
 
-from .config import CONFIG
-from .token_minter import TokenMinter
+from server.lib.config import CONFIG
+from .identity import TokenMinter
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,8 @@ class GenieResponse:
     message_id: str | None = None
     status: str = "COMPLETED"
     raw: dict[str, Any] = field(default_factory=dict)
+    transport: str = "rest"  # "rest" | "mcp"
+    deep_link: str | None = None  # link back into the Databricks Genie UI
 
 
 class GenieClient:

@@ -66,7 +66,7 @@ data = {
 
 The returned JWT carries the claim; UC reads it at query time via `current_oauth_custom_identity_claims()`.
 
-Source: [`server/lib/token_minter.py`](../server/lib/token_minter.py)
+Source: [`server/primitives/identity.py`](../server/primitives/identity.py)
 
 ### 1.2 Initializing the Databricks SDK from a profile
 
@@ -131,7 +131,7 @@ w.statement_execution.execute_statement(
 
 For account-level SPs (preferred in production so the same identity works across workspaces), use `AccountClient(...).service_principals` instead — the API surface is identical.
 
-Source: [`server/lib/sp_manager.py`](../server/lib/sp_manager.py)
+Source: [`server/primitives/sp_manager.py`](../server/primitives/sp_manager.py)
 
 ### 2.2 Rotate an SP's OAuth secret
 
@@ -160,7 +160,7 @@ for s in existing:
 
 For true zero-downtime overlap, hold both secrets active for a window (e.g. 5 min) so any caller still using the old credentials migrates successfully.
 
-Source: [`server/lib/sp_manager.py`](../server/lib/sp_manager.py)
+Source: [`server/primitives/sp_manager.py`](../server/primitives/sp_manager.py)
 
 ### 2.3 Deactivate a tenant
 
@@ -198,7 +198,7 @@ w.statement_execution.execute_statement(
 
 **Caveat:** JWTs already issued before deactivation remain valid until their natural TTL (~1h). The mapping `active=false` flip is what stops them from returning rows, not the secret deletion. The secret deletion only prevents new tokens.
 
-Source: [`server/lib/sp_manager.py`](../server/lib/sp_manager.py)
+Source: [`server/primitives/sp_manager.py`](../server/primitives/sp_manager.py)
 
 ### 2.4 Bulk onboarding at scale
 
@@ -322,7 +322,7 @@ for sp_app_id in tenant_sp_app_ids:
 
 In Pattern B, only the shared SP needs grants — far simpler.
 
-Source: [`server/lib/sp_manager.py`](../server/lib/sp_manager.py)
+Source: [`server/primitives/sp_manager.py`](../server/primitives/sp_manager.py)
 
 ### 3.4 Schema for the SP→tenant mapping table
 
@@ -365,7 +365,7 @@ r.raise_for_status()
 
 `PATCH` adds to the ACL; `PUT` replaces it. Use `PATCH` when onboarding incrementally.
 
-Source: [`server/lib/sp_manager.py`](../server/lib/sp_manager.py)
+Source: [`server/primitives/sp_manager.py`](../server/primitives/sp_manager.py)
 
 ### 4.2 Ask Genie a question end-to-end (start, poll, fetch result)
 
@@ -445,7 +445,7 @@ def ask(token: str, question: str, conversation_id: str | None = None) -> dict:
 
 **Rate limit:** Genie enforces ~5 questions/min per workspace. For high-fan-out use cases (isolation sweeps, multi-tenant batch), throttle calls or distribute across workspaces.
 
-Source: [`server/lib/genie_client.py`](../server/lib/genie_client.py)
+Source: [`server/primitives/genie.py`](../server/primitives/genie.py)
 
 ### 4.3 Identify which SP a token represents
 
@@ -461,7 +461,7 @@ r.raise_for_status()
 print(r.json())  # contains application_id, display_name, etc.
 ```
 
-Source: [`server/lib/genie_client.py`](../server/lib/genie_client.py)
+Source: [`server/primitives/genie.py`](../server/primitives/genie.py)
 
 ---
 
@@ -515,7 +515,7 @@ def audit(action: str, tenant_id: str, sp_app_id: str, *,
 
 **Production note:** the string interpolation here is fine for a sandbox demo but should be replaced with parameterized statements or a Lakebase append for high-volume audit ingestion.
 
-Source: [`server/lib/sp_manager.py`](../server/lib/sp_manager.py)
+Source: [`server/primitives/sp_manager.py`](../server/primitives/sp_manager.py)
 
 ### 5.3 Useful audit queries
 

@@ -1,78 +1,72 @@
 # Security & RBAC
 
-## Authentication Layers
+This describes the security posture of the reference as implemented. See
+[`architecture.md`](architecture.md) for the system view and
+[`pattern.md`](pattern.md) for the isolation pattern.
 
-The architecture uses a **two-layer authentication model** (following the Firefly SSO-SPN pattern):
+## Authentication layers
 
-### Layer 1: Tenant Authentication (Your System)
+A **two-layer model**: a user identity layer (your product) and a Databricks
+access layer (Service Principals). They are independent.
 
-Tenants authenticate against your proxy — never against Databricks.
+### Layer 1: End-user authentication (the app's own login)
 
-| Method | Use Case | Implementation |
-|--------|----------|----------------|
-| API Keys | Server-to-server, backend tenants | Hash with bcrypt, store in Lakebase |
-| OAuth 2.0 | Browser-based or mobile tenants | Use your IdP (Okta, Auth0, Azure AD) |
-| mTLS | High-security / regulated tenants | Client certificates for mutual auth |
+End users sign in to *your* product, never to Databricks. This repo ships a
+self-contained app login (`server/lib/auth.py`):
 
-```python
-# API key validation example
-from passlib.hash import bcrypt
+- Passwords hashed with **PBKDF2-HMAC-SHA256** (Python stdlib `hashlib`), with a
+  per-user salt.
+- A **signed session cookie** (HMAC) carries the authenticated identity; the
+  signing key is `MT_GENIE_SESSION_SECRET` (falls back to a stable value derived
+  from `AES_KEY_BASE64`).
+- Users live in the Lakebase `app_users` table (see
+  `sql/lakebase/V002__app_users.sql`); roles are `user` and `operator`.
 
-async def verify_api_key(api_key: str) -> dict:
-    """Validate API key and return tenant record."""
-    # Query Lakebase for matching hash
-    tenant = await db.fetch_one(
-        "SELECT * FROM client_registry WHERE api_key_hash = $1 AND active = true",
-        bcrypt.hash(api_key)
-    )
-    if not tenant:
-        raise HTTPException(status_code=401, detail="Invalid API key")
-    return tenant
-```
+This login is intentionally demo-grade and pluggable. For production, swap it
+for your own identity provider (OIDC SSO via Okta / Auth0 / Entra ID, mTLS for
+machine clients, etc.) — the rest of the system is unchanged because the only
+thing it needs from this layer is "which tenant is this request for?".
 
-### Layer 2: Databricks Authentication (Service Principal)
+### Layer 2: Databricks authentication (Service Principals)
 
-The proxy authenticates to Databricks using SP OAuth credentials. Tenants never see these credentials.
+The app authenticates to Databricks using Service Principal OAuth M2M
+credentials; end users never see them. This repo implements **Pattern A:
+one Service Principal per tenant**. The SP's own identity (`session_user()`)
+is what Unity Catalog keys the row filter on — there is no `custom_claim`.
 
-**Pattern B (Custom Claims):** Single SP, `custom_claim` in token embeds tenant identity.
-**Pattern A (SP-per-Tenant):** Per-tenant SP, `session_user()` identifies the tenant.
+> Pattern B (a single shared SP carrying a `custom_claim` per request) is a
+> valid alternative but is **not** implemented here; Pattern A keeps identity in
+> the platform rather than in a token the app constructs.
 
-## Two-Tier SP Design
+## Service Principals: roles & privilege separation
 
-Following the Firefly security model, maintain two SPs with different privilege levels:
+The reference uses SPs at three distinct privilege levels. Keeping them separate
+is the point — a compromise of one does not grant the others' powers.
 
-### Admin SP (Environment Variables Only)
+| SP / identity | Privilege | Where the secret lives |
+|---|---|---|
+| **Provisioning identity** | Create SPs, apply UC grants, set the row filter (admin ops in `scripts/`, `deploy.sh`) | Operator's CLI profile / secrets manager — **never** in the app DB |
+| **Per-tenant data SP** | Run Genie queries; read only its own rows (UC enforces) | Lakebase `sp_credentials`, **AES-256-GCM encrypted at rest** |
+| **Edge "doorman" SP** *(optional)* | Only CAN_USE on the Databricks App, to clear the Apps OAuth proxy at the front door (`edge/`) | `edge/.env` (gitignored) / secrets manager |
 
-Used exclusively by provisioning scripts and admin operations:
-- Create/delete catalogs and schemas
-- Manage UC grants
-- SCIM group management
-- Schema/volume operations
-
-**Never stored in a database.** Lives only in environment variables or a secrets manager.
-
-### Data SP (Database Storage, Encrypted)
-
-Used for tenant-facing data access:
-- Execute SQL queries via Genie
-- Browse catalogs and schemas scoped by row filters
-- Cannot create catalogs, modify permissions, or access other tenants' data (enforced by UC)
-
-**Stored encrypted** (AES-256-GCM) in Lakebase with per-environment encryption keys.
+The per-tenant data SP cannot create catalogs, change permissions, or reach
+another tenant's rows — Unity Catalog enforces that regardless of the app. The
+edge SP is deliberately minimal: it admits traffic to the app and nothing more;
+the per-tenant SPs do the data work. This edge-SP / data-SP split is this
+project's adaptation for fronting a Databricks App — not a Firefly requirement.
 
 ## Encryption
 
-### In Transit
+### In transit
 
-All network paths use TLS 1.3:
-- Tenant → Proxy App
-- Proxy App → Lakebase (PostgreSQL)
-- Proxy App → Databricks OIDC endpoint
-- Proxy App → Genie API
+TLS on all network paths: user → app, app → Lakebase, app → Databricks OIDC,
+app → Genie / Managed MCP, and (if used) client → edge → app.
 
-### At Rest
+### At rest
 
-SP credentials are stored in Lakebase `sp_credentials`, AES-GCM encrypted at rest with a 32-byte key from `AES_KEY_BASE64`. Full implementation:
+Per-tenant SP secrets are stored in Lakebase `sp_credentials`, AES-256-GCM
+encrypted with a 32-byte key from `AES_KEY_BASE64`
+(`server/lib/repository/credential.py`):
 
 ```python
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -80,11 +74,11 @@ import os, base64
 
 class CredentialEncryptor:
     def __init__(self, key: bytes):
-        """key should be 32 bytes (256-bit) from env/KMS."""
+        """key is 32 bytes (256-bit), base64-decoded from AES_KEY_BASE64."""
         self.aesgcm = AESGCM(key)
 
     def encrypt(self, plaintext: str) -> str:
-        nonce = os.urandom(12)  # 96-bit IV
+        nonce = os.urandom(12)  # 96-bit nonce
         ct = self.aesgcm.encrypt(nonce, plaintext.encode(), None)
         return base64.b64encode(nonce + ct).decode()
 
@@ -94,116 +88,86 @@ class CredentialEncryptor:
         return self.aesgcm.decrypt(nonce, ct, None).decode()
 ```
 
-### Key Management
+### Key management
 
-- Store encryption keys in a secrets manager (AWS KMS, Azure Key Vault, HashiCorp Vault)
-- Rotate keys quarterly
-- Use separate keys per environment (dev/staging/prod)
-- Never commit keys to code
+- Bind `AES_KEY_BASE64` from a Databricks secret (the deploy binds a Secret
+  resource); for production back it with a secrets manager (KMS / Key Vault /
+  Vault).
+- Use a separate key per environment (dev / staging / prod).
+- Document a rotation cadence; never commit keys.
 
-## Multi-Tenant Isolation (4 Layers)
+## Multi-tenant isolation (defense in depth)
 
-Defense in depth — any single layer compromise does not expose other tenants' data:
+Any single layer failing does not expose other tenants' data:
 
-| Layer | Mechanism | What It Prevents |
-|-------|-----------|------------------|
-| **1. Tenant Auth** | API key/OAuth validation in proxy | Unauthenticated access |
-| **2. Tenant Resolution** | Proxy maps tenant identity → tenant_id (immutable) | Tenant spoofing |
-| **3. Token Claims** | `custom_claim=<tenant_id>` embedded in JWT | Cross-tenant token reuse |
-| **4. Unity Catalog RLS** | `current_oauth_custom_identity_claims()` in row filters | Data leakage even if app layer is compromised |
+| Layer | Mechanism | What it prevents |
+|---|---|---|
+| **1. User auth** | App session login (PBKDF2 + signed cookie) | Unauthenticated access |
+| **2. Tenant resolution** | App maps the signed-in user → tenant_id | Tenant spoofing |
+| **3. Per-tenant SP** | Each tenant's queries run as its own SP token | Cross-tenant token reuse |
+| **4. Unity Catalog row filter** | `tenant_row_filter` joins `sp_tenant_mapping` on `session_user()` | Data leakage even if the app layer is compromised |
 
-## RBAC Model
+Layer 4 is load-bearing: it runs in the warehouse, so even a bug in the app
+cannot return another tenant's rows.
 
-### Application-Level Roles
+## RBAC model
 
-| Role | Permissions | Use Case |
-|------|-------------|----------|
-| **Platform Admin** | Manage tenants, view all data, configure Genie spaces | Your ops team |
-| **Tenant Admin** | Manage users within their tenant, view usage stats | Tenant's admin |
-| **Tenant User** | Query Genie, view results | End users |
+### Application roles
 
-### Unity Catalog Permissions
+| Role | Permissions | Use case |
+|---|---|---|
+| **operator** | The product **+** `/console`: SP lifecycle, audit, isolation verify | Your ops team |
+| **user** | The product only (Home / Ask / Dashboards) | End users |
 
-For the shared SP (Pattern B):
+### Unity Catalog grants (Pattern A — per-tenant SP)
 
-```sql
--- Minimum required grants
-GRANT USE_CATALOG ON CATALOG main TO `<sp-application-id>`;
-GRANT USE_SCHEMA ON SCHEMA main.analytics TO `<sp-application-id>`;
-GRANT SELECT ON SCHEMA main.analytics TO `<sp-application-id>`;
-
--- Row filters handle per-tenant isolation — the SP sees all rows
--- but UC filters based on the JWT claim
-```
-
-For the group (Pattern A):
+Onboarding grants each tenant SP the minimum it needs; the row filter does the
+isolation:
 
 ```sql
-GRANT USE_CATALOG ON CATALOG main TO genie_clients;
-GRANT USE_SCHEMA ON SCHEMA main.analytics TO genie_clients;
-GRANT SELECT ON SCHEMA main.analytics TO genie_clients;
+GRANT USE CATALOG  ON CATALOG  <catalog>          TO `<sp-application-id>`;
+GRANT USE SCHEMA   ON SCHEMA   <catalog>.<schema> TO `<sp-application-id>`;
+GRANT SELECT       ON TABLE    <catalog>.<schema>.bookings  TO `<sp-application-id>`;
+GRANT SELECT       ON TABLE    <catalog>.<schema>.customers TO `<sp-application-id>`;
+-- plus CAN_RUN on the Genie space (and CAN_RUN on the published dashboard)
 ```
 
-## Audit Trail (3 Levels)
+The SP can read the tables, but `tenant_row_filter` trims every result to the
+SP's own tenant. Admins in `MT_GENIE_ADMIN_GROUP` bypass the filter for
+verification.
 
-### Level 1: Application Audit (Proxy)
+## Audit trail
 
-```json
-{
-    "timestamp": "2026-03-25T14:30:00Z",
-    "tenant_id": "acme-corp",
-    "client_ip": "203.0.113.42",
-    "question": "What were top 10 orders last month?",
-    "genie_space_id": "abc123",
-    "status": "completed",
-    "latency_ms": 3200,
-    "rows_returned": 10
-}
-```
+### Application audit (Lakebase)
 
-### Level 2: Databricks API Audit
+Every query is appended to the Lakebase `audit_log` with tenant, actor, action,
+SP, question, status, and latency (`server/lib/repository/audit.py`). The
+operator console surfaces it.
 
-Logged automatically in `system.access.audit`:
-- SP identity making the API call
-- Genie space accessed
-- Timestamp and duration
+### Databricks / Unity Catalog audit (system tables)
 
-### Level 3: Unity Catalog Data Access Audit
-
-Logged in `system.access.audit`:
-- Tables/views accessed
-- SQL executed
-- Row filter evaluation
-- Data objects touched
-
-### Correlating Across Levels
+`system.access.audit` records the SP identity, the Genie space, the SQL
+executed, the objects touched, and row-filter evaluation — correlate to the
+app audit by SP application id and timestamp:
 
 ```sql
--- Find all data access by a specific tenant
-SELECT
-    a.event_time,
-    a.service_name,
-    a.action_name,
-    a.request_params,
-    a.response.status_code
+SELECT a.event_time, a.service_name, a.action_name, a.request_params
 FROM system.access.audit a
 WHERE a.user_identity.email = '<sp-application-id>'
-    -- Correlate with app-level logs using timestamp
-    AND a.event_time BETWEEN '2026-03-25T14:29:00' AND '2026-03-25T14:31:00'
+  AND a.event_time BETWEEN '2026-03-25T14:29:00' AND '2026-03-25T14:31:00'
 ORDER BY a.event_time;
 ```
 
-## Security Checklist
+## Security checklist
 
-- [ ] SP credentials encrypted at rest (AES-256-GCM)
-- [ ] Encryption keys in secrets manager, not env files
-- [ ] API keys hashed with bcrypt, never stored plaintext
-- [ ] TLS 1.3 on all network paths
-- [ ] Row filters applied to all tables with tenant data
-- [ ] Admin SP separated from data SP
-- [ ] Rate limiting per tenant in proxy
-- [ ] Audit logging at all three levels
-- [ ] Token cache with proactive refresh (not on-demand expiry)
+- [ ] Per-tenant SP secrets encrypted at rest (AES-256-GCM)
+- [ ] `AES_KEY_BASE64` from a secret/KMS, not an env file in the repo
+- [ ] App passwords hashed (PBKDF2), session cookie signed; demo password overridden
+- [ ] TLS on all network paths
+- [ ] Row filter applied to every table with tenant data
+- [ ] Provisioning identity separated from per-tenant data SPs (and edge SP)
+- [ ] Audit logged in the app **and** verified in `system.access.audit`
+- [ ] Token cache with proactive refresh (refresh ahead of expiry)
 - [ ] Tenant offboarding tested (deactivate + verify no data access)
-- [ ] Quarterly key rotation procedure documented
-- [ ] Penetration test: verify cross-tenant isolation
+- [ ] Key rotation cadence documented
+- [ ] Cross-tenant isolation verified (`/console` isolation check / `scripts/verify_isolation.py`)

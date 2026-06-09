@@ -22,7 +22,7 @@ class _FakeTenant:
 @pytest.fixture
 def client(monkeypatch):
     from server import app as app_module
-    from server.routers import tenants as tenants_router
+    from server.services import runtime
 
     fake_mgr = MagicMock()
     fake_mgr.list_tenants.return_value = [
@@ -31,12 +31,12 @@ def client(monkeypatch):
     ]
     fake_mgr.warehouse_id = "wh-test-1"
 
-    monkeypatch.setattr(tenants_router, "_mgr", lambda: fake_mgr)
+    monkeypatch.setattr(runtime, "manager", lambda: fake_mgr)
     return TestClient(app_module.app)
 
 
 def test_verify_returns_results_per_tenant(client):
-    from server.lib.verifier import TenantVerifyResult
+    from server.primitives.unity_catalog import TenantVerifyResult
 
     fake_results = [
         TenantVerifyResult(

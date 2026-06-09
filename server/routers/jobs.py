@@ -17,8 +17,8 @@ def runner() -> JobRunner:
     """Lazy singleton — first caller wires it up to the SPManager."""
     global _runner
     if _runner is None:
-        from server.routers.tenants import _mgr
-        _runner = JobRunner(_mgr())
+        from server.services import runtime
+        _runner = JobRunner(runtime.manager())
     return _runner
 
 

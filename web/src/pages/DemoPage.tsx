@@ -1,49 +1,22 @@
-import { useMemo, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Sparkles,
   Lock,
   ShieldCheck,
-  Zap,
   AlertCircle,
-  Bot,
-  Code2,
-  Columns,
-  Clock,
-  Plane,
-  Lightbulb,
+  MessageSquarePlus,
+  History,
+  ArrowRight,
 } from "lucide-react";
-import { api, type AskResponse, type Tenant } from "@/lib/api";
-import { Inspector } from "@/components/Inspector";
-
-const DEFAULT_Q =
-  "How many bookings do I have and what is my total spend?";
+import { api, type Tenant } from "@/lib/api";
+import { ChatThread, type ChatMessage } from "@/components/ask/ChatThread";
+import { ChatComposer } from "@/components/ask/ChatComposer";
+import { useTenant } from "@/lib/tenant";
 
 const SAMPLE_QUESTIONS = [
   "How many bookings do I have and what is my total spend?",
@@ -51,484 +24,294 @@ const SAMPLE_QUESTIONS = [
   "What's my average booking amount, by cabin class?",
   "Which suppliers appear most in my bookings?",
   "Which cabin class do my travelers use most?",
+  "What was my busiest booking month this year?",
 ];
 
+let uidCounter = 0;
+function uid(): string {
+  uidCounter += 1;
+  return `m${Date.now().toString(36)}-${uidCounter}`;
+}
+
 export function DemoPage() {
-  const tenants = useQuery({ queryKey: ["tenants"], queryFn: api.tenants });
-  const active = useMemo(
-    () =>
-      (tenants.data ?? []).filter((t) => t.status === "active"),
-    [tenants.data],
-  );
-  const [pick, setPick] = useState<string | undefined>(undefined);
-  const [q, setQ] = useState(DEFAULT_Q);
-  const [answer, setAnswer] = useState<AskResponse | null>(null);
-  const [sweep, setSweep] = useState<AskResponse[] | null>(null);
+  const { active, selected, loading: tenantsLoading } = useTenant();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const pick = selected?.tenant_id;
+
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Reset the conversation whenever the active tenant changes.
+  useEffect(() => {
+    setMessages([]);
+    setConversationId(null);
+  }, [pick]);
 
   const ask = useMutation({
-    mutationFn: () => api.ask(pick!, q, { inspect: true }),
-    onSuccess: (r) => setAnswer(r),
-  });
-  const sweepM = useMutation({
-    mutationFn: () => api.sweep(q),
-    onSuccess: (r) => setSweep(r),
+    mutationFn: (vars: { id: string; question: string }) =>
+      api.ask(pick!, vars.question, {
+        inspect: true,
+        conversation_id: conversationId,
+      }),
+    onSuccess: (resp, vars) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === vars.id ? { ...m, answer: resp, pending: false } : m,
+        ),
+      );
+      if (resp.conversation_id) setConversationId(resp.conversation_id);
+    },
+    onError: (err: Error, vars) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === vars.id ? { ...m, pending: false, error: err.message } : m,
+        ),
+      );
+    },
   });
 
-  const selected: Tenant | undefined = active.find((t) => t.tenant_id === pick);
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
 
-  // auto-pick first tenant
-  if (!pick && active.length > 0) {
-    setTimeout(() => setPick(active[0].tenant_id), 0);
+  const submit = (question: string) => {
+    const text = question.trim();
+    if (!text || !pick || ask.isPending) return;
+    const id = uid();
+    setMessages((prev) => [
+      ...prev,
+      { id, question: text, answer: null, pending: true },
+    ]);
+    ask.mutate({ id, question: text });
+  };
+
+  const newChat = () => {
+    setMessages([]);
+    setConversationId(null);
+    ask.reset();
+  };
+
+  // Prefill from Home ("?q=..."): submit once the tenant is ready, then
+  // clear the param so it doesn't re-fire on navigation.
+  const prefill = searchParams.get("q");
+  useEffect(() => {
+    if (prefill && pick) {
+      submit(prefill);
+      searchParams.delete("q");
+      setSearchParams(searchParams, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill, pick]);
+
+  const latestInspectorId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].answer?.inspector) return messages[i].id;
+    }
+    return null;
+  }, [messages]);
+
+  if (tenantsLoading) {
+    return (
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[264px_1fr]">
+        <div className="h-96 animate-pulse rounded-xl bg-slate-100" />
+        <div className="h-[560px] animate-pulse rounded-xl bg-slate-100" />
+      </div>
+    );
   }
 
-  const busy = ask.isPending || sweepM.isPending;
+  if (active.length === 0) {
+    return (
+      <Alert>
+        <AlertCircle className="h-4 w-4" />
+        <AlertTitle>No active tenants</AlertTitle>
+        <AlertDescription>
+          Onboard a tenant in the operator console first, then come back to
+          explore as that tenant.
+        </AlertDescription>
+      </Alert>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <Card className="border-indigo-100 shadow-sm">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5 text-indigo-600" />
-            Ask Genie as a tenant
-          </CardTitle>
-          <CardDescription>
-            Each query mints a fresh OAuth token via{" "}
-            <code className="text-[11px] bg-slate-100 px-1 rounded">
-              client_credentials
-            </code>{" "}
-            as the tenant's Service Principal. UC row filters enforce isolation
-            transparently — Genie generates one SQL query over the shared
-            table; only the tenant's rows come back.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          {tenants.isLoading ? (
-            <div className="space-y-3">
-              <div className="h-10 rounded-md bg-slate-100 animate-pulse" />
-              <div className="h-20 rounded-md bg-slate-100 animate-pulse" />
-            </div>
-          ) : active.length === 0 ? (
-            <Alert>
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>No active tenants</AlertTitle>
-              <AlertDescription>
-                Onboard a tenant on the Admin tab first.
-              </AlertDescription>
-            </Alert>
-          ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-5">
-              <div className="space-y-3">
-                <label className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">
-                  I am…
-                </label>
-                <Select value={pick} onValueChange={setPick}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Pick a tenant" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {active.map((t) => (
-                      <SelectItem key={t.tenant_id} value={t.tenant_id}>
-                        {t.tenant_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+    <div className="grid animate-fade-in grid-cols-1 gap-6 lg:grid-cols-[264px_1fr]">
+      {/* ───────────────── Left rail — conversation nav ───────────────── */}
+      <aside className="space-y-4">
+        {selected && <IdentityCard tenant={selected} />}
 
-                {selected && (
-                  <div className="rounded-lg border bg-gradient-to-br from-slate-50 to-white p-3 space-y-2 shadow-sm">
-                    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-indigo-700">
-                      <Lock className="h-3 w-3" />
-                      Active identity
-                    </div>
-                    <div className="text-xs font-mono space-y-1">
-                      <div>
-                        <span className="text-muted-foreground">tenant</span>{" "}
-                        <span className="text-slate-900">
-                          {selected.tenant_id}
-                        </span>
-                      </div>
-                      <div
-                        className="truncate text-slate-900"
-                        title={selected.sp_app_id}
-                      >
-                        <span className="text-muted-foreground">sp</span>{" "}
-                        {selected.sp_app_id}
-                      </div>
-                    </div>
-                    <Badge
-                      variant="outline"
-                      className="text-[11px] border-emerald-200 text-emerald-700 bg-emerald-50"
-                    >
-                      <ShieldCheck className="h-3 w-3 mr-1" />
-                      token ready
-                    </Badge>
-                  </div>
-                )}
-              </div>
-              <div className="space-y-3">
-                <label className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">
-                  Question
-                </label>
-                <Textarea
-                  rows={3}
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  className="font-mono text-sm"
-                />
-                <div className="flex items-center gap-2 flex-wrap">
-                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1.5">
-                    <Lightbulb className="h-3 w-3" />
-                    try
-                  </div>
-                  {SAMPLE_QUESTIONS.map((sq, i) => (
+        <Button
+          className="w-full justify-start gap-2"
+          style={{ background: "var(--brand)" }}
+          onClick={newChat}
+        >
+          <MessageSquarePlus className="h-4 w-4" />
+          New chat
+        </Button>
+
+        {messages.length > 0 && (
+          <RailSection icon={<History className="h-3 w-3" />} label="This chat">
+            <ul className="space-y-1">
+              {messages
+                .filter((m) => m.question)
+                .map((m) => (
+                  <li key={m.id}>
                     <button
-                      key={i}
                       type="button"
-                      onClick={() => setQ(sq)}
-                      disabled={busy}
-                      className="text-[11px] px-2.5 py-1 rounded-full border bg-white hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                      onClick={() =>
+                        scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })
+                      }
+                      className="block w-full truncate rounded-md px-2.5 py-1.5 text-left text-xs text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                      title={m.question}
                     >
-                      {sq.length > 45 ? sq.slice(0, 42) + "…" : sq}
+                      {m.question}
                     </button>
-                  ))}
-                </div>
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <Button
-                    onClick={() => ask.mutate()}
-                    disabled={!pick || !q.trim() || busy}
-                    className="bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700"
-                  >
-                    {ask.isPending ? (
-                      <>
-                        <Clock className="h-4 w-4 mr-2 animate-spin" />
-                        Calling Genie…
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles className="h-4 w-4 mr-2" />
-                        Ask Genie
-                      </>
-                    )}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => sweepM.mutate()}
-                    disabled={!q.trim() || busy}
-                  >
-                    {sweepM.isPending ? (
-                      <>
-                        <Clock className="h-4 w-4 mr-2 animate-spin" />
-                        Running sweep…
-                      </>
-                    ) : (
-                      <>
-                        <Zap className="h-4 w-4 mr-2" />
-                        Isolation sweep (all tenants)
-                      </>
-                    )}
-                  </Button>
-                </div>
-              </div>
+                  </li>
+                ))}
+            </ul>
+          </RailSection>
+        )}
+      </aside>
+
+      {/* ───────────────── Main — chat surface ───────────────── */}
+      <section className="flex min-h-[640px] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        {/* Header */}
+        <div className="flex items-center gap-2.5 border-b border-slate-100 px-5 py-3.5">
+          <span
+            className="flex h-8 w-8 items-center justify-center rounded-lg shadow-sm"
+            style={{ background: "var(--brand)" }}
+          >
+            <Sparkles className="h-4 w-4 text-white" />
+          </span>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold leading-tight">Ask</div>
+            <div className="truncate text-[11px] text-slate-500">
+              Travel analytics · as {selected?.tenant_name}
             </div>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div
+          ref={scrollRef}
+          className="scrollbar-soft flex-1 overflow-y-auto bg-slate-50/40 px-5 py-6"
+        >
+          {messages.length === 0 ? (
+            <Welcome
+              tenantName={selected?.tenant_name ?? "this tenant"}
+              onAsk={submit}
+            />
+          ) : (
+            <ChatThread messages={messages} latestInspectorId={latestInspectorId} />
           )}
-        </CardContent>
-      </Card>
+        </div>
 
-      {ask.isError && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Genie call failed</AlertTitle>
-          <AlertDescription>{(ask.error as Error).message}</AlertDescription>
-        </Alert>
-      )}
-
-      {ask.isPending && !answer && <AnswerSkeleton />}
-
-      {answer && (
-        <>
-          <AnswerCard a={answer} />
-          {answer.inspector && (
-            <div className="mt-4">
-              <Inspector payload={answer.inspector} />
-            </div>
-          )}
-        </>
-      )}
-
-      {!answer && !ask.isPending && !sweep && !sweepM.isPending && (
-        <InspectorPreview />
-      )}
-
-      {sweepM.isError && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Sweep failed</AlertTitle>
-          <AlertDescription>{(sweepM.error as Error).message}</AlertDescription>
-        </Alert>
-      )}
-
-      {sweepM.isPending && <SweepSkeleton count={active.length || 3} />}
-
-      {sweep && sweep.length > 0 && (
-        <Card className="shadow-sm">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Zap className="h-5 w-5 text-amber-500" />
-              Isolation sweep
-            </CardTitle>
-            <CardDescription>
-              Same question, every active tenant, in parallel. Genie usually
-              generates identical SQL — the divergent numbers are from UC row
-              filters, not the model.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {sweep.map((r) => (
-                <SweepCard key={r.tenant_id} r={r} />
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+        {/* Composer */}
+        <div className="border-t border-slate-100 bg-white px-5 py-3.5">
+          <ChatComposer
+            onSubmit={submit}
+            suggestions={SAMPLE_QUESTIONS.slice(0, 4)}
+            disabled={!pick || ask.isPending}
+            sending={ask.isPending}
+            showSuggestions={messages.length > 0}
+            placeholder={`Ask as ${selected?.tenant_name ?? "tenant"}…`}
+          />
+        </div>
+      </section>
     </div>
   );
 }
 
-function AnswerCard({ a }: { a: AskResponse }) {
+// ============================================================================
+// Left rail pieces
+// ============================================================================
+
+function RailSection({
+  icon,
+  label,
+  children,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
-    <Card className="shadow-sm overflow-hidden">
-      <div className="h-1 bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500" />
-      <CardHeader className="flex flex-row items-start justify-between gap-4">
-        <div className="min-w-0">
-          <CardTitle className="flex items-center gap-2">
-            <Bot className="h-5 w-5 text-indigo-600" />
-            {a.tenant_name}
-          </CardTitle>
-          <CardDescription className="font-mono text-xs truncate">
-            <Plane className="h-3 w-3 inline mr-1 -mt-0.5" />
-            {a.question}
-          </CardDescription>
-        </div>
-        <div className="flex gap-2 flex-wrap justify-end shrink-0">
-          <Badge
-            variant="outline"
-            className="font-mono text-[11px] border-emerald-200 text-emerald-700 bg-emerald-50"
-          >
-            {a.status}
-          </Badge>
-          <Badge variant="secondary" className="font-mono text-[11px]">
-            <Clock className="h-3 w-3 mr-1" />
-            {a.latency_ms} ms
-          </Badge>
-          <Badge variant="secondary" className="font-mono text-[11px]">
-            <Columns className="h-3 w-3 mr-1" />
-            {a.rows.length} rows
-          </Badge>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {a.answer_text && (
-          <div className="rounded-lg border border-indigo-100 bg-indigo-50/40 p-4 text-sm leading-relaxed">
-            {a.answer_text}
-          </div>
-        )}
-        {a.sql && (
-          <details className="rounded-md border bg-slate-50 p-3">
-            <summary className="cursor-pointer text-xs font-medium flex items-center gap-1.5 select-none">
-              <Code2 className="h-3.5 w-3.5" />
-              Genie-generated SQL
-            </summary>
-            <pre className="mt-2 text-xs font-mono whitespace-pre-wrap overflow-x-auto text-slate-800">
-              {a.sql}
-            </pre>
-          </details>
-        )}
-        {a.rows.length > 0 && (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                {(a.columns.length
-                  ? a.columns
-                  : a.rows[0].map((_, i) => `c${i}`)
-                ).map((c) => (
-                  <TableHead key={c}>{c}</TableHead>
-                ))}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {a.rows.slice(0, 25).map((r, i) => (
-                <TableRow key={i}>
-                  {r.map((v, j) => (
-                    <TableCell key={j} className="font-mono text-xs">
-                      {v as any}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function SweepCard({ r }: { r: AskResponse }) {
-  // Try to surface a headline number from the first row
-  const first = r.rows[0] ?? [];
-  const headline =
-    first[0] !== undefined && first[0] !== null ? String(first[0]) : null;
-  return (
-    <Card className="shadow-sm hover:shadow-md transition-shadow border-slate-200">
-      <div className="h-1 bg-gradient-to-r from-indigo-400 to-violet-400" />
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-2">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Bot className="h-4 w-4 text-indigo-600" />
-            {r.tenant_name}
-          </CardTitle>
-          <Badge variant="outline" className="text-[10px] font-mono">
-            {r.latency_ms} ms
-          </Badge>
-        </div>
-        <CardDescription className="text-[11px] font-mono truncate">
-          {r.sp_app_id.slice(0, 12)}…
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {headline && (
-          <div className="text-2xl font-bold text-indigo-700 tracking-tight">
-            {formatHeadline(headline)}
-          </div>
-        )}
-        {r.answer_text && (
-          <p className="text-xs leading-snug text-muted-foreground line-clamp-3">
-            {r.answer_text}
-          </p>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function formatHeadline(raw: string): string {
-  // If it's a number, format with commas
-  const n = Number(raw);
-  if (!Number.isNaN(n) && raw.trim() !== "") {
-    if (Number.isInteger(n) && n < 100000) return n.toLocaleString();
-    return n.toLocaleString(undefined, {
-      maximumFractionDigits: 0,
-    });
-  }
-  return raw;
-}
-
-function AnswerSkeleton() {
-  return (
-    <Card className="shadow-sm">
-      <div className="h-1 bg-gradient-to-r from-indigo-200 via-violet-200 to-fuchsia-200 animate-pulse" />
-      <CardContent className="py-6 space-y-3">
-        <div className="h-4 w-1/3 bg-slate-100 rounded animate-pulse" />
-        <div className="h-20 bg-slate-100 rounded-lg animate-pulse" />
-      </CardContent>
-    </Card>
-  );
-}
-
-function SweepSkeleton({ count }: { count: number }) {
-  return (
-    <Card className="shadow-sm">
-      <CardContent className="py-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {Array.from({ length: count }).map((_, i) => (
-            <div
-              key={i}
-              className="h-32 rounded-lg border bg-slate-50 animate-pulse"
-            />
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-const PREVIEW_STEPS = [
-  {
-    n: 1,
-    name: "Authenticate",
-    summary: "Tenant lookup in client_registry",
-  },
-  {
-    n: 2,
-    name: "Resolve tenant",
-    summary: "→ genie_space_id, sp_app_id",
-  },
-  {
-    n: 3,
-    name: "Mint token",
-    summary: "OAuth M2M, cache-aware",
-  },
-  {
-    n: 4,
-    name: "Apply row filter",
-    summary: "session_user → tenant_id",
-  },
-  {
-    n: 5,
-    name: "Ask Genie",
-    summary: "POST /spaces/{id}/start-conversation",
-  },
-  {
-    n: 6,
-    name: "Audit",
-    summary: "audit_log row in Lakebase",
-  },
-];
-
-function InspectorPreview() {
-  return (
-    <div className="rounded-lg border border-slate-200 bg-white">
-      <div className="px-5 py-4 border-b border-slate-100 flex items-baseline justify-between gap-4">
-        <div>
-          <div className="text-xs font-medium uppercase tracking-wider text-slate-500">
-            Request flow inspector
-          </div>
-          <div className="text-sm text-slate-700 mt-1">
-            Six steps run on every <span className="font-mono text-[12px]">/api/genie/ask</span>. Step 4 is the row filter — the line between tenant A and tenant B.
-          </div>
-        </div>
-        <div className="hidden sm:block text-[11px] font-mono text-slate-400 shrink-0">
-          ask a question →
-        </div>
+    <div className="space-y-2">
+      <div className="flex items-center gap-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+        {icon}
+        {label}
       </div>
-      <div className="px-5 py-4">
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-          {PREVIEW_STEPS.map((s) => {
-            const isHero = s.name === "Apply row filter";
-            return (
-              <div
-                key={s.n}
-                className={
-                  "rounded-md border px-2.5 py-2 " +
-                  (isHero
-                    ? "border-amber-300 bg-amber-50"
-                    : "border-slate-200 bg-slate-50/60")
-                }
-              >
-                <div className="flex items-baseline gap-1.5 text-[10px] font-mono text-slate-500">
-                  <span>{`step ${s.n}`}</span>
-                </div>
-                <div className="mt-1 text-xs font-medium leading-tight text-slate-900">
-                  {s.name}
-                </div>
-                <div className="mt-1 text-[10px] text-slate-500 leading-snug">
-                  {s.summary}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+      {children}
+    </div>
+  );
+}
+
+function IdentityCard({ tenant }: { tenant: Tenant }) {
+  return (
+    <div className="space-y-2.5 rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-3.5 shadow-sm">
+      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--brand-strong)]">
+        <Lock className="h-3 w-3" />
+        Active workspace
+      </div>
+      <div className="text-sm font-semibold text-slate-900">
+        {tenant.tenant_name}
+      </div>
+      <Badge
+        variant="outline"
+        className="border-emerald-200 bg-emerald-50 text-[11px] text-emerald-700"
+      >
+        <ShieldCheck className="mr-1 h-3 w-3" />
+        Secured by Unity Catalog
+      </Badge>
+    </div>
+  );
+}
+
+// ============================================================================
+// Welcome — suggested questions only (one clear job: ask)
+// ============================================================================
+
+function Welcome({
+  tenantName,
+  onAsk,
+}: {
+  tenantName: string;
+  onAsk: (q: string) => void;
+}) {
+  return (
+    <div className="mx-auto max-w-3xl space-y-8 py-4">
+      <div className="text-center">
+        <span
+          className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl shadow-md"
+          style={{ background: "var(--brand)" }}
+        >
+          <Sparkles className="h-7 w-7 text-white" />
+        </span>
+        <h2 className="text-xl font-semibold tracking-tight text-slate-900">
+          Ask about {tenantName}&rsquo;s travel data
+        </h2>
+        <p className="mx-auto mt-2 max-w-xl text-sm leading-relaxed text-slate-500">
+          Ask in plain English. Every answer is scoped to {tenantName} by Unity
+          Catalog — and each one carries a request-flow inspector that shows
+          exactly where that isolation happens.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+        {SAMPLE_QUESTIONS.map((q) => (
+          <button
+            key={q}
+            type="button"
+            onClick={() => onAsk(q)}
+            className="group flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm text-slate-700 shadow-sm transition-all hover:border-[var(--brand)] hover:bg-[var(--brand-soft)] hover:shadow"
+          >
+            <span className="min-w-0">{q}</span>
+            <ArrowRight className="h-4 w-4 shrink-0 text-slate-300 transition-colors group-hover:text-[var(--brand)]" />
+          </button>
+        ))}
       </div>
     </div>
   );

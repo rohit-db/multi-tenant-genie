@@ -33,6 +33,9 @@
     --ring: 222.2 84% 4.9%;
 
     --radius: 0.5rem;
+
+    /* Brand skin (--brand*) lives in web/src/brand/theme.css — the one folder
+       to re-skin the product. Loaded from main.tsx. */
   }
 
   .dark {
@@ -79,3 +82,35 @@
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+/* ----------------------------------------------------------------------------
+ * Motion + polish utilities. Additive only — used to give the product surfaces
+ * a calmer, more "real SaaS" entrance and feel. Respects reduced-motion.
+ * ------------------------------------------------------------------------- */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in { animation: fadeIn 0.4s ease both; }
+.animate-fade-up { animation: fadeUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-fade-up { animation: none; }
+}
+
+/* Refined, unobtrusive scrollbars for the in-app panels. */
+@supports (scrollbar-width: thin) {
+  .scrollbar-soft { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+}
+.scrollbar-soft::-webkit-scrollbar { width: 8px; height: 8px; }
+.scrollbar-soft::-webkit-scrollbar-thumb {
+  background: #cbd5e1; border-radius: 9999px; border: 2px solid transparent;
+  background-clip: content-box;
+}
+.scrollbar-soft::-webkit-scrollbar-thumb:hover { background: #94a3b8; background-clip: content-box; }
+.scrollbar-soft::-webkit-scrollbar-track { background: transparent; }
+
+/* Brand-tinted text selection. */
+::selection { background: var(--brand-soft); color: var(--brand-strong); }

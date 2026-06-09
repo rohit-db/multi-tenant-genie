@@ -36,13 +36,13 @@ For >5,000 tenants, parallelize across multiple account-API hosts (uncommon) or 
 
 ```bash
 # Dry-run plan
-python -m scripts.bulk_onboard --count 500 --dry-run
+python scripts/bulk_onboard.py --count 500 --dry-run
 
 # Real run from CSV
-python -m scripts.bulk_onboard --input tenants.csv --workers 5
+python scripts/bulk_onboard.py --input tenants.csv --workers 5
 
 # Tighter concurrency for shared-account environments
-python -m scripts.bulk_onboard --input tenants.csv --workers 3 --chunk 25
+python scripts/bulk_onboard.py --input tenants.csv --workers 3 --chunk 25
 ```
 
 ## Genie API Limits
@@ -154,7 +154,7 @@ OAuth tokens last 1 hour. Caching avoids redundant OIDC calls:
 
 ```python
 # Per-tenant token with proactive refresh
-# See server/lib/token_minter.py for the TokenMinter implementation
+# See server/primitives/identity.py for the TokenMinter implementation
 ```
 
 ## Per-Tenant Rate Limiting

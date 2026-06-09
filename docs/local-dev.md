@@ -21,7 +21,7 @@ The script prompts for:
 - Databricks workspace host (e.g. `https://abc.cloud.databricks.com`)
 - Databricks profile name from `~/.databrickscfg`
 - UC catalog
-- UC schema (default `mt_genie`)
+- UC schema (default `mt_genie_demo`)
 - Genie space ID
 
 It writes `.env.local` and exits.
@@ -39,6 +39,22 @@ cd web && npm install && npm run dev
 ```
 
 Open [http://localhost:5173](http://localhost:5173).
+
+## Optional: the external front door (edge gateway)
+
+To exercise the Firefly-style external login flow — where customer-facing users
+reach the product **without** Databricks SSO — run the edge / token-broker in
+front of the **deployed** app. It hosts your origin, keeps the app session
+cookie, and brokers into the Databricks App using an edge Service Principal
+token. See [edge-gateway.md](edge-gateway.md) for the full recipe; the short
+version:
+
+```bash
+cp edge/.env.example edge/.env     # set upstream URL + edge SP creds
+set -a; source edge/.env; set +a
+python scripts/edge_smoke.py       # prove the SP token clears the Apps proxy
+./edge/run.sh                      # http://127.0.0.1:9000
+```
 
 ## What lives where
 
@@ -66,7 +82,7 @@ pytest tests/test_smoke.py                     # fast sanity check, no Postgres
 pytest tests/ -k "not test_repository"         # skip the Lakebase-backed tests
 ```
 
-48 tests total. The 18 Lakebase-backed tests skip cleanly if Postgres isn't reachable.
+57 tests total. The 21 Lakebase-backed tests skip cleanly if Postgres isn't reachable.
 
 ## Resetting
 

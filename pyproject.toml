@@ -1,27 +1,25 @@
 [project]
-name = "databricks-app-template"
+name = "multi-tenant-genie"
 version = "0.1.0"
-description = "Modern Databricks App Template - FastAPI backend with React TypeScript frontend"
+description = "Multi-tenant Genie reference — embedded AI-native BI on Databricks (FastAPI + React)"
 authors = [
-    {name = "Your Name", email = "your.email@databricks.com"},
+    {name = "Rohit Bhagwat"},
 ]
+# Runtime dependencies. Databricks Apps install from requirements.txt; this
+# mirrors it so a local `pip install -e .` resolves the same stack.
 dependencies = [
-    "fastapi>=0.104.1",
-    "uvicorn[standard]>=0.24.0",
-    "databricks-sdk==0.59.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
     "pydantic>=2.5.0",
-    "python-multipart>=0.0.6",
-    "httpx>=0.25.0",
-    "pandas>=2.1.0",
-    "requests>=2.32.4",
-    "rich>=14.0.0",
-    "click>=8.1.0",
-    "databricks-connect>=16.1.6", # Latest version compatible with Python 3.11
-    "mlflow[databricks]>=3.1.1",
-    "debugpy>=1.8.15",
-    "python-dotenv>=1.1.1",
     "psycopg[binary]>=3.2.0",
     "cryptography>=42.0.0",
+    "databricks-sdk>=0.40.0",
+    "openai>=1.52.0",
+    "requests>=2.31.0",
+    "httpx>=0.27.0",
+    "mcp>=1.9",
+    "databricks-mcp>=0.9.0",
+    "click>=8.1.0",
 ]
 requires-python = ">=3.11"
 
@@ -41,13 +39,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["server", "scripts"]
+packages = ["server", "scripts", "edge"]
 
 [tool.ruff]
 line-length = 100
 indent-width = 2
-# Assume Python 3.12.
-target-version = "py312"
+# Match requires-python (>=3.11).
+target-version = "py311"
 # Enable auto-fix
 fix = true
 

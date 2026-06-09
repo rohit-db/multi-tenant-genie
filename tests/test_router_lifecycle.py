@@ -22,7 +22,7 @@ class _FakeTenant:
 @pytest.fixture
 def client(monkeypatch):
     from server import app as app_module
-    from server.routers import tenants as tenants_router
+    from server.services import runtime
 
     fake_mgr = MagicMock()
     fake_mgr.reactivate_tenant.return_value = "fresh-secret-xyz"
@@ -31,7 +31,7 @@ def client(monkeypatch):
         _FakeTenant(tenant_id="acme", tenant_name="Acme", sp_app_id="sp-acme", sp_display_name="mt-acme"),
     ]
 
-    monkeypatch.setattr(tenants_router, "_mgr", lambda: fake_mgr)
+    monkeypatch.setattr(runtime, "manager", lambda: fake_mgr)
     return TestClient(app_module.app), fake_mgr
 
 
@@ -89,7 +89,7 @@ def test_history_returns_per_tenant_rows(client):
         ),
     ]
     with patch(
-        "server.routers.tenants.audit_repo.history_for_tenant",
+        "server.services.tenant_service.audit_repo.history_for_tenant",
         return_value=fake_rows,
     ) as mocked:
         r = c.get("/api/tenants/acme/history?limit=10")

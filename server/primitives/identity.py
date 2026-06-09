@@ -15,7 +15,7 @@ import time
 
 import requests
 
-from .config import CONFIG
+from server.lib.config import CONFIG
 
 logger = logging.getLogger(__name__)
 

@@ -107,6 +107,10 @@ class JobRunner:
                 self._mgr.grant_genie_access([tenant_id])
             except Exception as e:
                 logger.warning("grant_genie_access(%s) failed: %s", tenant_id, e)
+            try:
+                self._mgr.grant_dashboard_access([tenant_id])
+            except Exception as e:
+                logger.warning("grant_dashboard_access(%s) failed: %s", tenant_id, e)
             return {
                 "ok": True,
                 "tenant_id": tenant_id,

@@ -1,7 +1,14 @@
-"""Service Principal lifecycle for the multi-tenant Genie reference.
+"""Per-tenant Service Principal lifecycle (the identity primitive).
 
-Each public method performs one lifecycle operation AND updates the UC
-mapping table so UC row filters reflect the change immediately.
+Each operation creates/rotates/disables/deletes one tenant's SP and keeps the
+Lakebase rows + UC mapping in lockstep so Unity Catalog row filters reflect the
+change immediately. This is the "one isolated identity per tenant" half of the
+thesis; the grant + row-filter half lives in ``unity_catalog``.
+
+Implemented as a mixin so ``SPManager`` can compose it with ``UnityCatalogMixin``
+over a single shared ``WorkspaceClient`` — every method here resolves
+``self.w``, ``self.warehouse_id``, ``self._audit`` and ``self._fetch_tenant``
+off the composed instance.
 
 Design notes
 ------------
@@ -9,7 +16,7 @@ Design notes
   privileges). In prod, account-level SPs are preferred so the same
   identity works across workspaces. The API surface is identical.
 * One OAuth secret per SP. For real zero-downtime rotation, create a
-  second secret, roll callers to it, then delete the first. `rotate()`
+  second secret, roll callers to it, then delete the first. ``rotate``
   below demonstrates the overlap pattern.
 * SP credentials are stored in Lakebase ``sp_credentials``, AES-GCM
   encrypted at rest. The legacy Databricks secret-scope path is no
@@ -19,17 +26,10 @@ Design notes
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Iterable
 
-import requests
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.iam import ServicePrincipal
-from databricks.sdk.service.sql import StatementState
-
-from .config import CONFIG
+from server.lib.config import CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -52,68 +52,12 @@ class OnboardResult:
     client_secret: str  # returned once, never read back
 
 
-class SPManager:
-    """Thin wrapper around the Databricks SDK for tenant SP lifecycle."""
+class ServicePrincipalLifecycleMixin:
+    """SCIM + OAuth-secret lifecycle for tenant SPs.
 
-    def __init__(self, profile: str | None = None):
-        self.profile = profile or CONFIG.profile
-        self.w = WorkspaceClient(profile=self.profile)
-        self._warehouse_id: str | None = None
-
-    # ------------------------------------------------------------------ helpers
-    @property
-    def warehouse_id(self) -> str:
-        if self._warehouse_id is None:
-            for wh in self.w.warehouses.list():
-                if wh.name == CONFIG.warehouse_name:
-                    self._warehouse_id = wh.id
-                    break
-            if self._warehouse_id is None:
-                # fall back to first running or any serverless warehouse
-                for wh in self.w.warehouses.list():
-                    self._warehouse_id = wh.id
-                    break
-        if self._warehouse_id is None:
-            raise RuntimeError("No SQL warehouse available in this workspace")
-        return self._warehouse_id
-
-    def _execute_sql(self, sql: str, parameters: list[dict] | None = None) -> list[list]:
-        resp = self.w.statement_execution.execute_statement(
-            warehouse_id=self.warehouse_id,
-            statement=sql,
-            parameters=parameters,
-            wait_timeout="30s",
-        )
-        # poll if still running
-        statement_id = resp.statement_id
-        while resp.status.state in (StatementState.PENDING, StatementState.RUNNING):
-            time.sleep(0.5)
-            resp = self.w.statement_execution.get_statement(statement_id)
-        if resp.status.state != StatementState.SUCCEEDED:
-            raise RuntimeError(f"SQL failed: {resp.status.error}")
-        rows = []
-        if resp.result and resp.result.data_array:
-            rows = resp.result.data_array
-        return rows
-
-    # ---------------------------------------------------------------- public API
-    def list_tenants(self, include_deactivated: bool = True) -> list[Tenant]:
-        from server.lib.repository import tenant as tenant_repo
-        rows = tenant_repo.list_all()
-        if not include_deactivated:
-            rows = [r for r in rows if r.status != "deactivated"]
-        return [
-            Tenant(
-                tenant_id=r.tenant_id,
-                tenant_name=r.display_name,
-                sp_app_id=r.sp_app_id,
-                sp_display_name=r.sp_display_name,
-                status=r.status,
-                created_at=r.created_at,
-                updated_at=r.updated_at,
-            )
-            for r in rows
-        ]
+    Requires the composing class to provide ``self.w`` (WorkspaceClient),
+    ``self.warehouse_id``, ``self._audit`` and ``self._fetch_tenant``.
+    """
 
     def onboard_tenant(self, tenant_id: str, tenant_name: str) -> OnboardResult:
         """Create SP, mint secret, register in Lakebase + UC mapping. Roll back on any failure."""
@@ -303,59 +247,6 @@ class SPManager:
         tenant_repo.delete(tenant_id)
         self._audit("delete", tenant_id, sp_app_id)
 
-    def grant_genie_access(
-        self, tenant_ids: Iterable[str] | None = None
-    ) -> None:
-        """Grant CAN_RUN on the demo Genie Space to each tenant's SP.
-
-        Uses the workspace permissions API (genie object type). Idempotent —
-        re-granting is fine. Falls through silently if ``CONFIG.genie_space_id``
-        is unset (first-run before the space exists).
-        """
-        if not CONFIG.genie_space_id:
-            logger.info("No genie_space_id configured — skipping Genie grant")
-            return
-        if tenant_ids is None:
-            tenants = [t for t in self.list_tenants() if t.status == "active"]
-        else:
-            tenants = [self._fetch_tenant(tid) for tid in tenant_ids]
-
-        acl = [
-            {"service_principal_name": t.sp_app_id, "permission_level": "CAN_RUN"}
-            for t in tenants
-        ]
-        token = self.w.config.oauth_token().access_token
-        r = requests.patch(
-            f"{CONFIG.host}/api/2.0/permissions/genie/{CONFIG.genie_space_id}",
-            headers={"Authorization": f"Bearer {token}"},
-            json={"access_control_list": acl},
-            timeout=30,
-        )
-        if not r.ok:
-            raise RuntimeError(f"Genie permissions grant failed: {r.status_code} {r.text}")
-
-    def grant_data_access(self, tenant_ids: Iterable[str] | None = None) -> None:
-        """Ensure each tenant SP has SELECT on bookings / customers / mapping.
-
-        The row filter + mapping table are the enforcement layer; the grants
-        just allow the SP to reach the tables at all. Runs idempotently.
-        """
-        if tenant_ids is None:
-            tenants = [t for t in self.list_tenants() if t.status == "active"]
-        else:
-            tenants = [self._fetch_tenant(tid) for tid in tenant_ids]
-
-        for t in tenants:
-            for obj in (
-                f"CATALOG {CONFIG.catalog}",
-                f"SCHEMA {CONFIG.catalog}.{CONFIG.schema}",
-            ):
-                self._execute_sql(
-                    f"GRANT USE {obj.split()[0]} ON {obj} TO `{t.sp_app_id}`"
-                )
-            for tbl in (CONFIG.fq_bookings, CONFIG.fq_customers, CONFIG.fq_mapping):
-                self._execute_sql(f"GRANT SELECT ON TABLE {tbl} TO `{t.sp_app_id}`")
-
     # ------------------------------------------------------------------ helpers
     def _ensure_secret_scope(self) -> None:
         scopes = {s.name for s in self.w.secrets.list_scopes()}
@@ -366,50 +257,3 @@ class SPManager:
         for sp in self.w.service_principals.list(filter=f'applicationId eq "{app_id}"'):
             return sp.id
         raise LookupError(f"SP {app_id} not found")
-
-    def _fetch_tenant(self, tenant_id: str) -> Tenant:
-        from server.lib.repository import tenant as tenant_repo
-        r = tenant_repo.get(tenant_id)
-        if not r:
-            raise LookupError(f"Tenant {tenant_id} not found")
-        return Tenant(
-            tenant_id=r.tenant_id,
-            tenant_name=r.display_name,
-            sp_app_id=r.sp_app_id,
-            sp_display_name=r.sp_display_name,
-            status=r.status,
-            created_at=r.created_at,
-            updated_at=r.updated_at,
-        )
-
-    def _audit(
-        self,
-        action: str,
-        tenant_id: str,
-        sp_app_id: str,
-        *,
-        detail: str | None = None,
-        latency_ms: int | None = None,
-        status: str = "ok",
-        question: str | None = None,
-    ) -> None:
-        from server.lib.repository import audit as audit_repo
-        actor = "unknown"
-        try:
-            actor = self.w.current_user.me().user_name or "unknown"
-        except Exception:
-            pass
-        audit_repo.append(
-            action=action, status=status, tenant_id=tenant_id, actor=actor,
-            sp_app_id=sp_app_id, question=question, latency_ms=latency_ms, detail=detail,
-        )
-
-
-def _parse_ts(v) -> datetime:
-    if isinstance(v, datetime):
-        return v
-    # Databricks SQL returns ISO strings
-    try:
-        return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
-    except Exception:
-        return datetime.now(timezone.utc)

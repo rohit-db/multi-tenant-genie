@@ -33,9 +33,22 @@ from openai import OpenAI
 from databricks.sdk import WorkspaceClient
 
 from server.lib.config import CONFIG
-from server.routers.genie import _run_sql_sync
+from server.services.genie_service import run_sql as _run_sql_sync
 
 logger = logging.getLogger(__name__)
+
+_PLAN_MCP_SYSTEM = (
+    "You are a data analyst agent that works ONLY by asking a Databricks Genie "
+    "space natural-language questions. Given a focus area, decide on 2 or 3 "
+    "specific natural-language questions to ask Genie that would help answer it. "
+    "Return ONLY a JSON object — no prose, no markdown. Format:\n"
+    '{\n'
+    '  "reasoning": "one sentence on what you\'re looking for",\n'
+    '  "questions": ["question 1", "question 2"]\n'
+    "}\n"
+    "Keep each question concrete and answerable from booking/customer data. "
+    "Never ask more than 3 questions. Do NOT write SQL — Genie does that."
+)
 
 _DEFAULT_MODEL = "databricks-claude-sonnet-4"
 
@@ -175,6 +188,95 @@ def run_insights(tenant_id: str, focus: str) -> dict[str, Any]:
         "tenant_id": tenant_id,
         "focus": focus,
         "model": model,
+        "reasoning": plan.get("reasoning"),
+        "tool_calls": tool_calls,
+        "recommendation": recommendation,
+    }
+
+
+def run_insights_mcp(tenant_id: str, focus: str) -> dict[str, Any]:
+    """MCP variant: the agent orchestrates the Genie **managed MCP** server.
+
+    Same 3 steps, but every tool call is a natural-language question routed
+    through ``/api/2.0/mcp/genie/{space_id}`` as the tenant SP. Genie writes
+    and runs the SQL; the UC row filter scopes results to the tenant because
+    ``session_user()`` is the SP. "Databricks + Genie MCP is all you need."
+    """
+    from server.primitives.managed_mcp import GenieMCPClient
+    from server.services import runtime
+
+    tenants = [t for t in runtime.manager().list_tenants() if t.tenant_id == tenant_id]
+    if not tenants:
+        raise ValueError(f"Tenant {tenant_id} not found")
+    tenant = tenants[0]
+    secret = runtime.secret_for_sp(tenant.sp_app_id)
+    if not secret:
+        raise ValueError(f"No credential stored for tenant {tenant_id}")
+
+    client = _llm_client()
+    model = _model()
+    space_id = CONFIG.genie_space_id
+
+    # Step 1: PLAN — LLM picks natural-language questions for Genie
+    plan_resp = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": _PLAN_MCP_SYSTEM},
+            {"role": "user", "content": f"Focus area: {focus}"},
+        ],
+        max_tokens=600,
+        temperature=0.2,
+    )
+    plan = _parse_plan_json((plan_resp.choices[0].message.content or "").strip())
+    questions = plan.get("questions", plan.get("queries", []))[:3]
+
+    # Step 2: EXECUTE — ask Genie over MCP, as the tenant SP
+    mcp = GenieMCPClient()
+    tool_calls: list[dict[str, Any]] = []
+    conversation_id: str | None = None
+    for q in questions:
+        question = q if isinstance(q, str) else str(q.get("sql") or q.get("name") or q)
+        try:
+            r = mcp.ask(
+                space_id=space_id, question=question,
+                client_id=tenant.sp_app_id, client_secret=secret,
+                conversation_id=conversation_id, timeout_s=120,
+            )
+            conversation_id = r.conversation_id or conversation_id
+            tool_calls.append({
+                "name": question,
+                "sql": r.sql,
+                "columns": r.columns,
+                "rows": [list(x) for x in r.rows[:20]],
+                "row_count": len(r.rows),
+                "answer": r.answer_text,
+                "latency_ms": r.latency_ms,
+                "deep_link": r.deep_link,
+            })
+        except Exception as e:
+            tool_calls.append({"name": question, "error": str(e)})
+
+    # Step 3: SYNTHESIZE
+    synth_resp = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": _SYNTH_SYSTEM},
+            {"role": "user", "content": (
+                f"Focus area: {focus}\n\n"
+                f"Genie answers (JSON):\n{json.dumps(tool_calls, default=str)[:8000]}\n\n"
+                f"Recommendation:"
+            )},
+        ],
+        max_tokens=400,
+        temperature=0.4,
+    )
+    recommendation = (synth_resp.choices[0].message.content or "").strip()
+
+    return {
+        "tenant_id": tenant_id,
+        "focus": focus,
+        "model": model,
+        "transport": "mcp",
         "reasoning": plan.get("reasoning"),
         "tool_calls": tool_calls,
         "recommendation": recommendation,

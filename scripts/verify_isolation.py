@@ -21,8 +21,8 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from server.lib.config import CONFIG  # noqa: E402
-from server.lib.sp_manager import SPManager  # noqa: E402
-from server.lib.token_minter import TokenMinter  # noqa: E402
+from server.primitives.sp_manager import SPManager  # noqa: E402
+from server.primitives.identity import TokenMinter  # noqa: E402
 
 
 def _load_local_secrets() -> dict[str, str]:

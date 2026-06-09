@@ -26,14 +26,14 @@ class _FakeAuditRow:
 @pytest.fixture
 def client(monkeypatch):
     from server import app as app_module
-    from server.routers import tenants as tenants_router
+    from server.services import runtime
 
     fake_mgr = MagicMock()
     fake_mgr._execute_sql.return_value = [
         ["sp-acme", "acme", "true"],
         ["sp-globex", "globex", "false"],
     ]
-    monkeypatch.setattr(tenants_router, "_mgr", lambda: fake_mgr)
+    monkeypatch.setattr(runtime, "manager", lambda: fake_mgr)
     return TestClient(app_module.app), fake_mgr
 
 

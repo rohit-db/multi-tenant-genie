@@ -25,7 +25,7 @@ if str(_REPO) not in sys.path:
 
 from server.lib import db, domain  # noqa: E402
 from server.lib.config import CONFIG  # noqa: E402
-from server.lib.sp_manager import SPManager  # noqa: E402
+from server.primitives.sp_manager import SPManager  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("seed")

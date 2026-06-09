@@ -30,7 +30,7 @@ class _FakeOnboardResult:
 @pytest.fixture
 def client(monkeypatch):
     from server import app as app_module
-    from server.routers import tenants as tenants_router
+    from server.services import runtime
 
     fake_mgr = MagicMock()
 
@@ -51,7 +51,7 @@ def client(monkeypatch):
     fake_mgr.grant_data_access.return_value = None
     fake_mgr.grant_genie_access.return_value = None
 
-    monkeypatch.setattr(tenants_router, "_mgr", lambda: fake_mgr)
+    monkeypatch.setattr(runtime, "manager", lambda: fake_mgr)
 
     # Reset job runner state per test
     from server.routers import jobs as jobs_router
