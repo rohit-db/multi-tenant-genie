@@ -63,3 +63,6 @@ scripts/spike_mcp_isolation.py
 
 # Databricks bundle artifacts
 .databricks/
+
+# Generated, self-contained blog HTML (base64 images trip secret scanners; rebuild with docs/blog/build_html.py)
+docs/blog/databricks-is-all-you-need.html
